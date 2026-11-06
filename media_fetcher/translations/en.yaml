@@ -1,0 +1,18 @@
+configuration:
+  token:
+    name: API token
+    description: Optional. Set a token for clients that do not learn it through the Supervisor's discovery; empty, the app creates a new random token at every start and announces it through discovery only.
+  max_jobs:
+    name: Concurrent jobs
+    description: How many fetch jobs run at the same time; further requests get "busy" until one finishes.
+  keep_minutes:
+    name: Keep finished jobs
+    description: Minutes a finished job and its file stay available before they are deleted.
+  allow_any_site:
+    name: Allow any site
+    description: Also use yt-dlp's generic extractor, which fetches media from any address, your home network included. Off, only sites yt-dlp has an extractor for are fetched.
+  log_level:
+    name: Log level
+    description: "How much the app writes to its log: debug (with every yt-dlp message), info, warning or error."
+network:
+  8099/tcp: The API on the host, for clients outside Home Assistant's app network (optional)

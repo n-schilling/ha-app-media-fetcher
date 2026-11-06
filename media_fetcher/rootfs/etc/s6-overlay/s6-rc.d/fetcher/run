@@ -1,0 +1,8 @@
+#!/command/with-contenv bashio
+# shellcheck shell=bash
+# ==============================================================================
+# Runs the fetch service
+# ==============================================================================
+export PYTHONPATH=/usr/lib
+export PATH="/opt/venv/bin:${PATH}"
+exec python3 -m media_fetcher

@@ -1,0 +1,18 @@
+configuration:
+  token:
+    name: API-Token
+    description: Optional. Ein festes Token für Clients, die es nicht über die Discovery des Supervisors erfahren; leer erzeugt die App bei jedem Start ein neues zufälliges Token und meldet es nur per Discovery.
+  max_jobs:
+    name: Gleichzeitige Aufträge
+    description: Wie viele Aufträge gleichzeitig laufen; weitere Anfragen bekommen „busy“, bis einer fertig ist.
+  keep_minutes:
+    name: Fertige Aufträge behalten
+    description: Minuten, die ein fertiger Auftrag und seine Datei abrufbar bleiben, bevor sie gelöscht werden.
+  allow_any_site:
+    name: Beliebige Seiten erlauben
+    description: Auch den generischen Extractor von yt-dlp nutzen, der Medien von jeder Adresse holt, auch aus dem Heimnetz. Aus werden nur Seiten geholt, für die yt-dlp einen Extractor hat.
+  log_level:
+    name: Protokollstufe
+    description: "Wie viel die App protokolliert: debug (mit jeder yt-dlp-Meldung), info, warning oder error."
+network:
+  8099/tcp: Die API auf dem Host, für Clients außerhalb des App-Netzes von Home Assistant (optional)

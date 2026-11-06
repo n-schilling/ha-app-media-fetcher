@@ -1,0 +1,366 @@
+"""The HTTP API under /api/v1 and a status page for Home Assistant's ingress.
+
+Every endpoint but health needs "Authorization: Bearer <token>". Errors are
+JSON: {"error": {"code": "...", "message": "..."}}. The status page at / is
+HTML and answers only the ingress proxy; it shows versions, settings and the
+jobs, never the token.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import hmac
+import html
+import json
+import re
+from dataclasses import dataclass, field
+from urllib.parse import urlsplit
+
+from aiohttp import web
+
+from .fetcher import KINDS, FetchError
+from .jobs import JobManager, NotReady
+
+PORT = 8099
+API = "/api/v1"
+HEALTH = f"{API}/health"
+INGRESS_PEER = "172.30.32.2"       # the Supervisor's ingress proxy
+URL_LENGTH = 2048
+BODY_LENGTH = 64 * 1024
+DEFAULT_FORMAT = {"audio": "m4a", "video": "mp4"}
+STATUS_CODES = {400: "bad_request", 404: "not_found", 405: "method_not_allowed", 413: "too_large",
+                415: "unsupported_media_type"}
+CONTROL = re.compile(r"[\x00-\x20\x7f]")
+
+
+class ApiError(Exception):
+    def __init__(self, status: int, code: str, message: str) -> None:
+        super().__init__(message)
+        self.status, self.code, self.message = status, code, message
+
+
+@dataclass
+class Context:
+    manager: JobManager
+    token: str
+    versions: dict                       # yt_dlp, js_runtime, ffmpeg
+    version: str                         # the app's
+    peers: frozenset[str]                # who may see the status page
+    slug: str | None = None              # for the link to the app's settings
+    settings: dict = field(default_factory=dict)
+
+
+def error(status: int, code: str, message: str, **headers: str) -> web.Response:
+    return web.json_response({"error": {"code": code, "message": message}}, status=status, headers=headers)
+
+
+@web.middleware
+async def errors(request: web.Request, handler) -> web.StreamResponse:
+    try:
+        return await handler(request)
+    except ApiError as err:
+        return error(err.status, err.code, err.message)
+    except web.HTTPException as err:
+        if err.status >= 400 and request.path.startswith(API):
+            return error(err.status, STATUS_CODES.get(err.status, "error"), err.reason or "error")
+        raise
+
+
+@web.middleware
+async def auth(request: web.Request, handler) -> web.StreamResponse:
+    if request.path.startswith(API) and request.path != HEALTH:
+        scheme, _, value = request.headers.get("Authorization", "").partition(" ")
+        if scheme.lower() != "bearer" or not hmac.compare_digest(value.strip(), request.app["ctx"].token):
+            return error(401, "unauthorized", "a valid bearer token is required",
+                         **{"WWW-Authenticate": "Bearer"})
+    return await handler(request)
+
+
+# --- requests --------------------------------------------------------------------------------
+async def json_body(request: web.Request) -> dict:
+    if request.content_length and request.content_length > BODY_LENGTH:
+        raise ApiError(413, "too_large", "the request body is too large")
+    try:
+        data = json.loads(await request.text() or "null")
+    except ValueError as err:
+        raise ApiError(400, "invalid_json", f"the body is no JSON: {err}") from err
+    if not isinstance(data, dict):
+        raise ApiError(400, "invalid_json", "the body must be a JSON object")
+    return data
+
+
+def valid_url(value) -> str:
+    if not isinstance(value, str) or not value or len(value) > URL_LENGTH or CONTROL.search(value):
+        raise ApiError(400, "invalid_url", "url must be an http or https address")
+    try:
+        parts = urlsplit(value)
+        hostname = parts.hostname
+    except ValueError as err:
+        raise ApiError(400, "invalid_url", f"url is malformed: {err}") from err
+    if parts.scheme not in ("http", "https") or not hostname:
+        raise ApiError(400, "invalid_url", "url must be an http or https address")
+    return value
+
+
+def job_request(data: dict) -> tuple[str, str, str, int | None]:
+    url = valid_url(data.get("url"))
+    kind = data.get("kind")
+    if kind not in KINDS:
+        raise ApiError(400, "invalid_request", "kind must be audio or video")
+    fmt = data.get("format", DEFAULT_FORMAT[kind])
+    if fmt not in KINDS[kind]:
+        raise ApiError(400, "invalid_request", f"format for {kind} must be one of {', '.join(KINDS[kind])}")
+    max_duration = data.get("max_duration")
+    if max_duration is not None and (isinstance(max_duration, bool) or not isinstance(max_duration, int)
+                                     or max_duration <= 0):
+        raise ApiError(400, "invalid_request", "max_duration must be a whole number of seconds above 0")
+    return url, kind, fmt, max_duration
+
+
+# --- handlers --------------------------------------------------------------------------------
+async def health(request: web.Request) -> web.Response:
+    ctx: Context = request.app["ctx"]
+    return web.json_response({"ok": True, "version": ctx.version, **ctx.versions})
+
+
+async def info(request: web.Request) -> web.Response:
+    ctx: Context = request.app["ctx"]
+    url = valid_url((await json_body(request)).get("url"))
+    loop = asyncio.get_running_loop()
+    try:
+        result = await loop.run_in_executor(ctx.manager.probe_pool, ctx.manager.fetcher.info, url)
+    except FetchError as err:
+        raise ApiError(422, err.code, err.message) from err
+    return web.json_response(result)
+
+
+async def create_job(request: web.Request) -> web.Response:
+    ctx: Context = request.app["ctx"]
+    url, kind, fmt, max_duration = job_request(await json_body(request))
+    job = ctx.manager.create(url, kind, fmt, max_duration)
+    if job is None:
+        raise ApiError(429, "busy", f"{ctx.manager.max_jobs} jobs are running, try again later")
+    return web.json_response({"id": job.id, "state": "queued"}, status=201)
+
+
+async def list_jobs(request: web.Request) -> web.Response:
+    return web.json_response(request.app["ctx"].manager.snapshots())
+
+
+async def get_job(request: web.Request) -> web.Response:
+    job = request.app["ctx"].manager.snapshot(request.match_info["id"])
+    if job is None:
+        raise ApiError(404, "not_found", "no such job")
+    return web.json_response(job)
+
+
+async def get_file(request: web.Request) -> web.StreamResponse:
+    manager: JobManager = request.app["ctx"].manager
+    try:
+        found = manager.file(request.match_info["id"])
+    except NotReady as state:
+        raise ApiError(409, "not_ready", f"the job is {state}") from None
+    if found is None:
+        raise ApiError(404, "not_found", "no such job")
+    path, content_type, name = found
+    if not path.is_file():
+        raise ApiError(404, "not_found", "the file is gone")
+    return web.FileResponse(path, headers={"Content-Type": content_type,
+                                           "Content-Disposition": f'attachment; filename="{name}"'})
+
+
+async def delete_job(request: web.Request) -> web.Response:
+    if not request.app["ctx"].manager.delete(request.match_info["id"]):
+        raise ApiError(404, "not_found", "no such job")
+    return web.Response(status=204)
+
+
+# --- the status page -----------------------------------------------------------------------------
+STYLE = """
+:root { color-scheme: light dark; --primary-background-color: #fafafa; --card-background-color: #fff;
+  --primary-text-color: #212121; --secondary-text-color: #727272; --divider-color: rgba(0,0,0,.12);
+  --primary-color: #03a9f4; --success-color: #4caf50; --warning-color: #ff9800; --error-color: #db4437;
+  --sidebar-background-color: #fff; --sidebar-text-color: #212121; --sidebar-icon-color: rgba(0,0,0,.5);
+  --app-header-border-bottom: 1px solid var(--divider-color); --ha-card-border-radius: 12px;
+  --ha-card-border-width: 1px; --ha-card-border-color: var(--divider-color); --ha-card-box-shadow: none;
+  --ha-font-family-body: Roboto, Noto, sans-serif; --header-height: 56px; }
+@media (prefers-color-scheme: dark) { :root { --primary-background-color: #111; --card-background-color: #1c1c1c;
+  --primary-text-color: #e1e1e1; --secondary-text-color: #9b9b9b; --divider-color: rgba(225,225,225,.12);
+  --sidebar-background-color: #1c1c1c; --sidebar-text-color: #e1e1e1; --sidebar-icon-color: rgba(255,255,255,.5); } }
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--primary-background-color); color: var(--primary-text-color);
+  font: 14px/1.6 var(--ha-font-family-body); -webkit-font-smoothing: antialiased; }
+svg { width: 24px; height: 24px; fill: currentColor; flex: none; }
+header { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; height: var(--header-height);
+  padding: 0 12px; background: var(--sidebar-background-color); color: var(--sidebar-text-color);
+  border-bottom: var(--app-header-border-bottom); }
+header h1 { margin: 0 0 0 12px; font-size: 20px; font-weight: 400; line-height: 32px; }
+header .actions { margin-left: auto; display: flex; align-items: center; }
+header .actions a { display: flex; align-items: center; justify-content: center; width: 48px; height: 48px;
+  border-radius: 50%; color: var(--sidebar-icon-color); }
+header .actions a:hover { background: color-mix(in srgb, var(--primary-text-color) 6%, transparent); }
+main { margin: 0 auto; padding: 16px; max-width: 1040px; }
+.card { background: var(--card-background-color); border-radius: var(--ha-card-border-radius);
+  border: var(--ha-card-border-width) solid var(--ha-card-border-color); box-shadow: var(--ha-card-box-shadow);
+  margin-bottom: 16px; overflow: hidden; }
+.card h2 { margin: 0; padding: 24px 16px 16px; font-size: 24px; font-weight: 400; line-height: 32px; }
+.card .content { padding: 0 16px 16px; }
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr)); gap: 0 16px; }
+table { border-collapse: collapse; width: 100%; }
+th, td { text-align: left; padding: 8px 16px 8px 0; vertical-align: top; }
+td { border-top: 1px solid var(--divider-color); }
+th { font-weight: 500; font-size: 12px; white-space: nowrap; }
+table.kv th { width: 45%; font-size: 14px; font-weight: 400; color: var(--secondary-text-color);
+  border-top: 1px solid var(--divider-color); }
+table.kv tr:first-child th, table.kv tr:first-child td { border-top: 0; }
+.list th:first-child, .list td:first-child { padding-left: 16px; }
+.list th { height: 56px; vertical-align: middle; border-bottom: 1px solid var(--divider-color); }
+.list td { height: 52px; vertical-align: middle; font-size: 13px; }
+.list tr:first-child td { border-top: 0; }
+.ok { color: var(--success-color); } .bad { color: var(--error-color); } .busy { color: var(--primary-color); }
+.muted { color: var(--secondary-text-color); } .nowrap { white-space: nowrap; }
+.sub { display: block; font-size: 12px; line-height: 16px; color: var(--secondary-text-color); }
+.scroll { overflow-x: auto; }
+"""
+# Takes Home Assistant's theme from the page around the ingress frame (same
+# origin) and swaps in a fresh copy of the page every REFRESH seconds
+THEME_VARS = ("primary-background-color", "card-background-color", "primary-text-color", "secondary-text-color",
+              "divider-color", "primary-color", "success-color", "warning-color", "error-color",
+              "sidebar-background-color", "sidebar-text-color", "sidebar-icon-color", "app-header-border-bottom",
+              "ha-card-border-radius", "ha-card-border-width", "ha-card-border-color", "ha-card-box-shadow",
+              "ha-font-family-body", "header-height")
+REFRESH = 10
+SCRIPT = """(() => {
+  try {
+    const outer = window.parent.document.documentElement;
+    if (outer !== document.documentElement) {
+      const take = () => {
+        const theme = getComputedStyle(outer), own = document.documentElement.style;
+        for (const n of NAMES) { const v = theme.getPropertyValue("--" + n).trim(); if (v) own.setProperty("--" + n, v); }
+        const ha = window.parent.document.querySelector("home-assistant");
+        if (ha && ha.hass) own.colorScheme = ha.hass.themes.darkMode ? "dark" : "light";
+      };
+      take();
+      new MutationObserver(take).observe(outer, { attributes: true, attributeFilter: ["style", "class"] });
+    }
+  } catch (e) {}
+  const update = async () => {
+    try {
+      const page = await fetch(location.href, { cache: "no-store" });
+      if (!page.ok) return;
+      const doc = new DOMParser().parseFromString(await page.text(), "text/html");
+      document.querySelector("main").replaceWith(doc.querySelector("main"));
+    } catch (e) {}
+  };
+  setInterval(update, REFRESH * 1000);
+})();""".replace("NAMES", json.dumps(THEME_VARS)).replace("REFRESH", str(REFRESH))
+SETTINGS_ICON = ("M12,8A4,4 0 0,1 16,12A4,4 0 0,1 12,16A4,4 0 0,1 8,12A4,4 0 0,1 12,8M12,10A2,2 0 0,0 10,12A2,2 0 0,0 "
+                 "12,14A2,2 0 0,0 14,12A2,2 0 0,0 12,10M10,22C9.75,22 9.54,21.82 9.5,21.58L9.13,18.93C8.5,18.68 "
+                 "7.96,18.34 7.44,17.94L4.95,18.95C4.73,19.03 4.46,18.95 4.34,18.73L2.34,15.27C2.21,15.05 2.27,14.78 "
+                 "2.46,14.63L4.57,12.97L4.5,12L4.57,11L2.46,9.37C2.27,9.22 2.21,8.95 2.34,8.73L4.34,5.27C4.46,5.05 "
+                 "4.73,4.96 4.95,5.05L7.44,6.05C7.96,5.66 8.5,5.32 9.13,5.07L9.5,2.42C9.54,2.18 9.75,2 10,2H14C14.25,2 "
+                 "14.46,2.18 14.5,2.42L14.87,5.07C15.5,5.32 16.04,5.66 16.56,6.05L19.05,5.05C19.27,4.96 19.54,5.05 "
+                 "19.66,5.27L21.66,8.73C21.79,8.95 21.73,9.22 21.54,9.37L19.43,11L19.5,12L19.43,13L21.54,14.63C21.73,"
+                 "14.78 21.79,15.05 21.66,15.27L19.66,18.73C19.54,18.95 19.27,19.04 19.05,18.95L16.56,17.95C16.04,18.34 "
+                 "15.5,18.68 14.87,18.93L14.5,21.58C14.46,21.82 14.25,22 14,22H10M11.25,4L10.88,6.61C9.68,6.86 8.62,7.5 "
+                 "7.85,8.39L5.44,7.35L4.69,8.65L6.8,10.2C6.4,11.37 6.4,12.64 6.8,13.8L4.68,15.36L5.43,16.66L7.86,15.62C8.63,"
+                 "16.5 9.68,17.14 10.87,17.38L11.24,20H12.76L13.13,17.39C14.32,17.14 15.37,16.5 16.14,15.62L18.57,16.66L19.32,"
+                 "15.36L17.2,13.81C17.6,12.64 17.6,11.37 17.2,10.2L19.31,8.65L18.56,7.35L16.15,8.39C15.38,7.5 14.32,6.86 "
+                 "13.12,6.62L12.75,4H11.25Z")
+STATE_CLASS = {"done": "ok", "failed": "bad", "cancelled": "muted", "queued": "muted"}
+
+esc = html.escape
+
+
+def _size(n: int | None) -> str:
+    if n is None:
+        return "–"
+    for unit in ("B", "kB", "MB", "GB"):
+        if n < 1000 or unit == "GB":
+            return f"{n:.0f} {unit}" if unit == "B" else f"{n:.1f} {unit}"
+        n /= 1000
+    return "–"
+
+
+def _duration(seconds: int | None) -> str:
+    if seconds is None:
+        return "–"
+    return f"{seconds // 60}:{seconds % 60:02d}"
+
+
+def _kv(rows: list[tuple[str, str]]) -> str:
+    return '<table class="kv">' + "".join(f"<tr><th>{esc(k)}</th><td>{v}</td></tr>" for k, v in rows) + "</table>"
+
+
+def _job_row(job: dict) -> str:
+    state = job["state"]
+    cls = STATE_CLASS.get(state, "busy")
+    detail = ""
+    if state == "downloading":
+        detail = (f"{_size(job['done_bytes'])} of {_size(job['total_bytes'])}" if job["total_bytes"]
+                  else _size(job["done_bytes"]))
+    elif state == "done":
+        detail = f"{_size(job['size'])}, {esc(job['content_type'] or '')}"
+    elif state == "failed" and job["error"]:
+        detail = f"{esc(job['error']['code'])}: {esc(job['error']['message'])}"
+    title = esc(job["title"] or "") or '<span class="muted">(not probed yet)</span>'
+    return (f'<tr><td class="nowrap"><span class="{cls}">{esc(state)}</span><span class="sub">{esc(job["id"])}</span></td>'
+            f'<td>{title}<span class="sub">{esc(job["url"])}</span></td>'
+            f'<td class="nowrap">{esc(job["kind"])} / {esc(job["format"])}<span class="sub">{_duration(job["duration"])}</span></td>'
+            f'<td>{detail}<span class="sub">{esc(job["created"] or "")}</span></td></tr>')
+
+
+def render(ctx: Context, jobs: list[dict]) -> str:
+    versions = ctx.versions
+    runtime = versions.get("js_runtime")
+    ffmpeg = versions.get("ffmpeg")
+    service = _kv([
+        ("App", esc(ctx.version)),
+        ("yt-dlp", esc(versions.get("yt_dlp") or "–")),
+        ("JavaScript runtime", esc(runtime) if runtime else '<span class="bad">none</span>'),
+        ("ffmpeg", esc(ffmpeg) if ffmpeg else '<span class="bad">none</span>'),
+    ])
+    s = ctx.settings
+    settings = _kv([
+        ("API token", "from the options" if s.get("token_fixed") else "random, new at every start"),
+        ("Concurrent jobs", esc(str(s.get("max_jobs", "–")))),
+        ("Keep finished jobs", f"{esc(str(s.get('keep_minutes', '–')))} min"),
+        ("Allow any site", "yes" if s.get("allow_any_site") else "no"),
+    ])
+    rows = "".join(_job_row(job) for job in jobs)
+    table = (f'<div class="scroll"><table class="list"><tr><th>State</th><th>Title</th><th>Kind</th><th>Progress</th></tr>'
+             f"{rows}</table></div>") if jobs else '<div class="content"><p class="muted">No jobs.</p></div>'
+    actions = (f'<a href="/config/app/{esc(ctx.slug)}/config" target="_top" title="Settings">'
+               f'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="{SETTINGS_ICON}"/></svg></a>' if ctx.slug else "")
+    return ('<!doctype html><html lang="en"><head><meta charset="utf-8">'
+            '<meta name="viewport" content="width=device-width, initial-scale=1"><title>Media Fetcher</title>'
+            f"<style>{STYLE}</style><script>{SCRIPT}</script></head><body>"
+            f'<header><h1>Media Fetcher</h1><div class="actions">{actions}</div></header><main>'
+            f'<div class="cards"><div class="card"><h2>Service</h2><div class="content">{service}</div></div>'
+            f'<div class="card"><h2>Settings</h2><div class="content">{settings}</div></div></div>'
+            f'<div class="card"><h2>Jobs</h2>{table}</div></main></body></html>')
+
+
+async def status_page(request: web.Request) -> web.Response:
+    ctx: Context = request.app["ctx"]
+    if request.remote not in ctx.peers:
+        return web.Response(status=403, text="only through Home Assistant")
+    return web.Response(text=render(ctx, ctx.manager.snapshots()), content_type="text/html",
+                        headers={"Cache-Control": "no-store"})
+
+
+# --- the application -------------------------------------------------------------------------
+def create_app(manager: JobManager, token: str, versions: dict, version: str,
+               peers: frozenset[str] = frozenset({INGRESS_PEER}), slug: str | None = None,
+               settings: dict | None = None) -> web.Application:
+    app = web.Application(middlewares=[errors, auth], client_max_size=BODY_LENGTH)
+    app["ctx"] = Context(manager, token, versions, version, peers, slug, settings or {})
+    app.router.add_get(HEALTH, health)
+    app.router.add_post(f"{API}/info", info)
+    app.router.add_get(f"{API}/jobs", list_jobs)
+    app.router.add_post(f"{API}/jobs", create_job)
+    app.router.add_get(f"{API}/jobs/{{id}}", get_job)
+    app.router.add_delete(f"{API}/jobs/{{id}}", delete_job)
+    app.router.add_get(f"{API}/jobs/{{id}}/file", get_file)
+    app.router.add_get("/", status_page)
+    return app

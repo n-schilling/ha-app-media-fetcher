@@ -1,0 +1,95 @@
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: App configuration
+        uses: frenck/action-addon-linter@b9cfd1bc62ba60d2c4fc96317b5f7ada5923f4a7 # v2.21.1
+        with:
+          path: ./media_fetcher
+      - name: Changelog has the version
+        run: .github/scripts/changelog-section.sh media_fetcher/CHANGELOG.md "$(yq -r '.version' media_fetcher/config.yaml)" > /dev/null
+      - name: Shell scripts
+        run: >-
+          shellcheck --shell=bash --severity=warning
+          media_fetcher/rootfs/etc/s6-overlay/s6-rc.d/fetcher/run
+          media_fetcher/rootfs/etc/s6-overlay/s6-rc.d/fetcher/finish
+
+  unit:
+    name: Unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          # Debian trixie's Python, the one in the image
+          python-version: "3.13"
+      - name: Install
+        run: pip install -r media_fetcher/requirements.txt pytest==9.1.1 pytest-aiohttp==1.1.1 ruff==0.17.3
+      - name: Ruff
+        run: ruff check media_fetcher/rootfs/usr/lib/media_fetcher tests
+      - name: Test
+        run: pytest -v
+
+  image:
+    name: Build and start (${{ matrix.arch }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            platform: linux/amd64
+          - arch: aarch64
+            platform: linux/arm64
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Build
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          version=$(yq -r '.version' media_fetcher/config.yaml)
+          docker buildx build --platform "${PLATFORM}" \
+            --build-arg "BUILD_VERSION=${version}" --load -t media-fetcher:test media_fetcher
+      - name: yt-dlp finds Deno and ffmpeg
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        # The debug header names the JavaScript runtime and ffmpeg; without a
+        # URL yt-dlp then exits with an error, which is fine here
+        run: |
+          out=$(docker run --rm --network none --platform "${PLATFORM}" \
+            --entrypoint yt-dlp media-fetcher:test -v 2>&1 || true)
+          echo "${out}"
+          grep -q 'JS runtimes: deno-' <<< "${out}"
+          grep -q 'exe versions: ffmpeg' <<< "${out}"
+      - name: Start without options
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        # The service loads, finds no options and says so
+        run: |
+          out=$(docker run --rm --network none --platform "${PLATFORM}" -e PYTHONPATH=/usr/lib \
+            --entrypoint python3 media-fetcher:test -m media_fetcher 2>&1 || true)
+          echo "${out}"
+          grep -q '/data/options.json not readable' <<< "${out}"
