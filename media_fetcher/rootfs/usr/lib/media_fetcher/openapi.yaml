@@ -1,0 +1,479 @@
+openapi: 3.1.0
+info:
+  title: Media Fetcher
+  version: 0.1.0
+  summary: Fetches audio or video from links yt-dlp understands, as a service in Home Assistant's app network
+  description: |
+    A small HTTP service of the Media Fetcher app for Home Assistant. `info` tells what a link
+    holds; a job fetches it as audio (m4a, mp3, opus, flac, wav or the source's own format) or
+    video (mp4, mkv or the source's own container) with yt-dlp, Deno as its JavaScript runtime
+    and ffmpeg for conversions, and serves the file for a while.
+
+    Every request but `health` and this definition carries `Authorization: Bearer <token>`.
+    The token is announced to Home Assistant through the Supervisor's discovery
+    (`{"service": "media_fetcher", "config": {"host", "port", "token"}}`) or set in the app's
+    options. Errors are `{"error": {"code": "...", "message": "..."}}`; yt-dlp's messages are
+    shortened to their first line, at most 200 characters.
+  license:
+    name: Apache-2.0
+    identifier: Apache-2.0
+  contact:
+    url: https://github.com/n-schilling/ha-app-media-fetcher/issues
+externalDocs:
+  description: The app's documentation
+  url: https://github.com/n-schilling/ha-app-media-fetcher/blob/main/media_fetcher/DOCS.md
+servers:
+  - url: http://{host}:8099/api/v1
+    description: The app in Home Assistant's app network; the host is the app's slug with dashes
+    variables:
+      host:
+        default: local-media-fetcher
+        description: The container's name, e.g. local-media-fetcher for a locally installed copy
+security:
+  - bearer: []
+tags:
+  - name: service
+    description: What the service runs with
+  - name: links
+    description: What a link holds
+  - name: jobs
+    description: Fetching a link and picking up the file
+paths:
+  /health:
+    get:
+      operationId: getHealth
+      tags: [service]
+      summary: The versions the service runs with
+      security: []
+      responses:
+        "200":
+          description: The service is up
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+  /openapi.yaml:
+    get:
+      operationId: getOpenApi
+      tags: [service]
+      summary: This definition
+      security: []
+      responses:
+        "200":
+          description: The OpenAPI document
+          content:
+            application/yaml:
+              schema:
+                type: string
+  /info:
+    post:
+      operationId: getInfo
+      tags: [links]
+      summary: What a link holds, without downloading
+      description: |
+        A link to one video of a playlist is that video; a playlist itself is not resolved and
+        answers `unsupported_url`. A link whose host is at a non-public address (the home
+        network, Home Assistant, the Supervisor) answers `unsupported_url` as well.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Link"
+      responses:
+        "200":
+          description: What yt-dlp found
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Info"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          description: "yt-dlp cannot use the link: `unsupported_url`, `not_available`, `live` or `extract_failed`"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /jobs:
+    get:
+      operationId: listJobs
+      tags: [jobs]
+      summary: All jobs, oldest first
+      responses:
+        "200":
+          description: The jobs
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Job"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      operationId: createJob
+      tags: [jobs]
+      summary: Starts a fetch
+      description: |
+        Audio takes the best audio stream, preferring one that already has the wanted format,
+        and converts it with ffmpeg where needed; a stream that already has the codec is copied,
+        not re-encoded. Video takes the best video and audio streams, merged into the wanted
+        container without re-encoding. A finished job and its file stay for the app's
+        `keep_minutes`, then they are deleted.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/JobRequest"
+      responses:
+        "201":
+          description: The job is queued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobCreated"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "422":
+          description: The link's host is at a non-public address or does not resolve (`unsupported_url`)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          description: As many jobs as the app's `max_jobs` are running (`busy`)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /jobs/{id}:
+    parameters:
+      - $ref: "#/components/parameters/JobId"
+    get:
+      operationId: getJob
+      tags: [jobs]
+      summary: One job with its state and progress
+      responses:
+        "200":
+          description: The job
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Job"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      operationId: deleteJob
+      tags: [jobs]
+      summary: Cancels a running job or deletes a finished one with its file
+      description: |
+        A running job stops at yt-dlp's next progress step; a conversion that is already running
+        finishes first. Its files are deleted either way. The job shows `cancelled` until its
+        thread has stopped, then it is gone.
+      responses:
+        "204":
+          description: Cancelled or deleted
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /jobs/{id}/file:
+    parameters:
+      - $ref: "#/components/parameters/JobId"
+    get:
+      operationId: getJobFile
+      tags: [jobs]
+      summary: The file of a done job
+      description: |
+        Served with its content type, `Content-Length` and
+        `Content-Disposition: attachment; filename="<id>.<ext>"`; ranges are supported.
+      responses:
+        "200":
+          description: The file
+          headers:
+            Content-Disposition:
+              schema:
+                type: string
+                examples: ['attachment; filename="3f9a0c1b2d4e5f60.m4a"']
+          content:
+            audio/mp4:
+              schema:
+                type: string
+                format: binary
+            audio/mpeg:
+              schema:
+                type: string
+                format: binary
+            audio/ogg:
+              schema:
+                type: string
+                format: binary
+            audio/flac:
+              schema:
+                type: string
+                format: binary
+            audio/wav:
+              schema:
+                type: string
+                format: binary
+            video/mp4:
+              schema:
+                type: string
+                format: binary
+            video/x-matroska:
+              schema:
+                type: string
+                format: binary
+            video/webm:
+              schema:
+                type: string
+                format: binary
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: The job is not done (`not_ready`); the message names its state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+components:
+  securitySchemes:
+    bearer:
+      type: http
+      scheme: bearer
+      description: The app's API token, from the Supervisor's discovery or the `token` option
+  parameters:
+    JobId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: "^[0-9a-f]{16}$"
+      description: The job's id
+  responses:
+    BadRequest:
+      description: "The request is wrong: `invalid_json`, `invalid_url` (not an http or https address, or not a plain host) or `invalid_request` (a wrong field, named in the message)"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Unauthorized:
+      description: No valid bearer token (`unauthorized`)
+      headers:
+        WWW-Authenticate:
+          schema:
+            type: string
+            const: Bearer
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    NotFound:
+      description: No such job (`not_found`); finished jobs are deleted after the app's `keep_minutes`
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              description: A fixed code; the ones yt-dlp's failures map to are listed under `Job.error`
+              examples: [not_available]
+            message:
+              type: string
+              description: For people, at most 200 characters for yt-dlp's messages
+              examples: ["Video unavailable. This video is not available"]
+    Health:
+      type: object
+      required: [ok, version, yt_dlp, js_runtime, ffmpeg]
+      properties:
+        ok:
+          type: boolean
+          const: true
+        version:
+          type: string
+          description: The app's version
+          examples: ["0.1.0"]
+        yt_dlp:
+          type: string
+          examples: ["2026.10.26"]
+        js_runtime:
+          type: [string, "null"]
+          description: The JavaScript runtime yt-dlp found, or null; without one many sites refuse or fail
+          examples: ["deno 2.9.8"]
+        ffmpeg:
+          type: [string, "null"]
+          description: ffmpeg's version, or null; without it there are no conversions and no merged video
+          examples: ["7.1.5-0"]
+    Link:
+      type: object
+      required: [url]
+      properties:
+        url:
+          type: string
+          format: uri
+          description: An http or https link, at most 2048 characters
+          examples: ["https://www.youtube.com/watch?v=jNQXAC9IVRw"]
+    Info:
+      type: object
+      required: [id, title, duration, uploader, extractor, webpage_url, thumbnail, is_live]
+      properties:
+        id:
+          type: [string, "null"]
+          description: The site's id of the media
+          examples: [jNQXAC9IVRw]
+        title:
+          type: [string, "null"]
+          examples: ["Me at the zoo"]
+        duration:
+          type: [integer, "null"]
+          description: Whole seconds, or null when the site does not say
+          examples: [19]
+        uploader:
+          type: [string, "null"]
+          description: The uploader, channel or account, whatever the site reports
+          examples: [jawed]
+        extractor:
+          type: [string, "null"]
+          description: yt-dlp's extractor
+          examples: [youtube]
+        webpage_url:
+          type: [string, "null"]
+          format: uri
+        thumbnail:
+          type: [string, "null"]
+          format: uri
+        is_live:
+          type: boolean
+          description: A live stream; it cannot be fetched
+    JobRequest:
+      type: object
+      required: [url, kind]
+      properties:
+        url:
+          type: string
+          format: uri
+          description: An http or https link, at most 2048 characters
+          examples: ["https://www.youtube.com/watch?v=jNQXAC9IVRw"]
+        kind:
+          type: string
+          enum: [audio, video]
+        format:
+          type: string
+          description: "Audio: m4a (default), mp3, opus, flac, wav or best (the stream's own format). Video: mp4 (default), mkv or best (whatever container the merge produces)"
+          enum: [m4a, mp3, opus, flac, wav, mp4, mkv, best]
+        max_duration:
+          type: integer
+          minimum: 1
+          description: Seconds; a longer video fails with `too_long` before anything is downloaded. Unknown durations pass
+          examples: [3600]
+    JobCreated:
+      type: object
+      required: [id, state]
+      properties:
+        id:
+          type: string
+          pattern: "^[0-9a-f]{16}$"
+          examples: [3f9a0c1b2d4e5f60]
+        state:
+          type: string
+          const: queued
+    Job:
+      type: object
+      required: [id, state, url, kind, format, title, duration, done_bytes, total_bytes, filename, size,
+                 content_type, error, created, finished]
+      properties:
+        id:
+          type: string
+          pattern: "^[0-9a-f]{16}$"
+        state:
+          type: string
+          enum: [queued, probing, downloading, converting, done, failed, cancelled]
+          description: |
+            `queued` waits for a thread; `probing` is yt-dlp looking at the link, after which
+            `title` and `duration` are set; `downloading` follows `done_bytes` and
+            `total_bytes` of the current stream (a video restarts them for its audio stream);
+            `converting` is ffmpeg at work; `done` has the file; `failed` has `error`;
+            `cancelled` is deleted while running, gone once its thread stopped
+        url:
+          type: string
+          format: uri
+        kind:
+          type: string
+          enum: [audio, video]
+        format:
+          type: string
+          enum: [m4a, mp3, opus, flac, wav, mp4, mkv, best]
+        title:
+          type: [string, "null"]
+        duration:
+          type: [integer, "null"]
+          description: Whole seconds
+        done_bytes:
+          type: integer
+          minimum: 0
+        total_bytes:
+          type: [integer, "null"]
+          description: Null while the size is unknown
+        filename:
+          type: [string, "null"]
+          description: "`<id>.<ext>` once the job is done"
+          examples: [3f9a0c1b2d4e5f60.m4a]
+        size:
+          type: [integer, "null"]
+          description: Bytes of the file once the job is done
+        content_type:
+          type: [string, "null"]
+          description: By the file's format, e.g. audio/mp4 for m4a
+          examples: [audio/mp4]
+        error:
+          oneOf:
+            - type: "null"
+            - type: object
+              required: [code, message]
+              properties:
+                code:
+                  type: string
+                  enum: [unsupported_url, not_available, live, extract_failed, too_long, download_failed, convert_failed]
+                  description: |
+                    `unsupported_url`: no extractor, a playlist, a non-public host or a stream
+                    protocol yt-dlp cannot download itself; `not_available`: the site refuses
+                    it (unavailable, private, removed, members only, sign-in, not in your
+                    country); `live`: a live stream, an event that has not started or a
+                    premiere; `extract_failed`: anything else yt-dlp reports before
+                    downloading; `too_long`: longer than `max_duration`; `download_failed`
+                    and `convert_failed`: the phase that failed
+                message:
+                  type: string
+        created:
+          type: string
+          format: date-time
+          description: ISO 8601, UTC
+          examples: ["2026-11-06T21:05:12Z"]
+        finished:
+          type: [string, "null"]
+          format: date-time
+          description: ISO 8601, UTC; set for done, failed and cancelled jobs

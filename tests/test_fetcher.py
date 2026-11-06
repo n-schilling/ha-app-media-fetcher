@@ -48,6 +48,7 @@ def test_errors_get_a_code(message, code):
 def test_base_options_keep_the_generic_extractor_out():
     opts = f.base_options(False)
     assert opts["allowed_extractors"] == ["default", "-generic"]
+    assert opts["external_downloader"] == {"default": "native"} and opts["concurrent_fragment_downloads"] == 1
     assert f.base_options(True)["allowed_extractors"] == ["default"]
     assert opts["cachedir"] is False and opts["noplaylist"] is True and opts["cookiefile"] is None
     assert opts["extract_flat"] == "in_playlist" and opts["quiet"] and opts["noprogress"]
@@ -275,3 +276,29 @@ def test_the_guard_refuses_private_addresses_while_yt_dlp_runs(tmp_path):
     assert "not a public address" in seen["error"] and err.value.code == "extract_failed"
     # Outside a fetch the same thread resolves anything
     assert socket.getaddrinfo("localhost", 80)
+
+
+@pytest.mark.parametrize("info", [
+    {**VIDEO, "protocol": "rtmp"},
+    {**VIDEO, "protocol": "rtsp"},
+    {**VIDEO, "protocol": None},
+    {**VIDEO, "requested_formats": [{"protocol": "https"}, {"protocol": "rtmp_ffmpeg"}]},
+])
+def test_streams_that_need_another_program_are_refused(info, tmp_path):
+    scenario = Scenario(info=info)
+    with pytest.raises(FetchError) as err:
+        Fetcher(False, scenario.ydl_class(), resolve=resolve).download("https://x.test/v", "audio", "m4a", None,
+                                                                       tmp_path / "j", "j", Recorder())
+    assert err.value.code == "unsupported_url" and "protocol" in err.value.message and scenario.processed == 0
+
+
+@pytest.mark.parametrize("info", [
+    {**VIDEO, "protocol": "m3u8_native"},
+    {**VIDEO, "protocol": "http_dash_segments"},
+    {**VIDEO, "requested_formats": [{"protocol": "https"}, {"protocol": "m3u8"}]},
+])
+def test_streams_yt_dlp_downloads_itself_pass(info, tmp_path):
+    scenario = Scenario(info=info)
+    path = Fetcher(False, scenario.ydl_class(), resolve=resolve).download("https://x.test/v", "audio", "m4a", None,
+                                                                          tmp_path / "j", "j", Recorder())
+    assert path.exists() and f.stream_protocols(info)

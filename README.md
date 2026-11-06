@@ -45,7 +45,9 @@ curl -s -H "$H" http://local-media-fetcher:8099/api/v1/jobs/<id>
 curl -s -H "$H" -o zoo.m4a http://local-media-fetcher:8099/api/v1/jobs/<id>/file
 ```
 
-Errors are `{"error": {"code": "…", "message": "…"}}`: `invalid_url`, `unsupported_url`, `not_available`, `live`, `extract_failed`, `too_long`, `download_failed`, `convert_failed`, `busy`, `not_ready`, `not_found`, `unauthorized`.
+Errors are `{"error": {"code": "…", "message": "…"}}`: `invalid_url`, `unsupported_url`, `not_available`, `live`, `extract_failed`, `too_long`, `download_failed`, `convert_failed`, `busy`, `not_ready`, `not_found`, `unauthorized`. The whole API is described in [`openapi.yaml`](media_fetcher/rootfs/usr/lib/media_fetcher/openapi.yaml), which the service also serves at `/api/v1/openapi.yaml`.
+
+**Open web UI** on the app's page (administrators only) has a form to fetch a link and download the file, the list of jobs, and the versions in use.
 
 ## Security in short
 
@@ -56,7 +58,7 @@ The token is the only lock on the API, so keep it to the clients that need it; t
 The service is a Python package in [`media_fetcher/rootfs/usr/lib/media_fetcher`](media_fetcher/rootfs/usr/lib/media_fetcher): `api.py` (aiohttp, the status page), `jobs.py` (threads, files, cleanup), `fetcher.py` (yt-dlp options and error mapping), `supervisor.py` (discovery). The tests replace `yt_dlp.YoutubeDL` with a fake and need no network:
 
 ```bash
-pip install -r media_fetcher/requirements.txt pytest pytest-aiohttp ruff
+pip install -r media_fetcher/requirements.txt pytest pytest-aiohttp pyyaml ruff
 ruff check media_fetcher/rootfs/usr/lib/media_fetcher tests
 pytest
 ```

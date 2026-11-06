@@ -45,6 +45,8 @@ Base: `http://<host>:8099/api/v1`, JSON in and out. Errors come as
 
 with yt-dlp's message shortened to its first line, at most 200 characters, without the `ERROR: [site] id:` prefix. Without a valid token every endpoint but `health` answers `401 unauthorized`.
 
+The whole API is described in [`openapi.yaml`](rootfs/usr/lib/media_fetcher/openapi.yaml) (OpenAPI 3.1), which the service also serves at `GET /api/v1/openapi.yaml` without a token.
+
 ### `GET /health`
 
 No token needed. The versions the service runs with; `js_runtime` or `ffmpeg` is `null` when missing.
@@ -67,7 +69,7 @@ What a link holds, without downloading. Body: `{"url": "https://…"}`.
 | Status | `code` | Meaning |
 |---|---|---|
 | 400 | `invalid_url` | Not an http or https address |
-| 422 | `unsupported_url` | No extractor for this address, a playlist, or a host at a non-public address |
+| 422 | `unsupported_url` | No extractor for this address, a playlist, a host at a non-public address, or a stream only another program could fetch |
 | 422 | `not_available` | The site refuses it: unavailable, private, removed, members only, sign-in required, not in your country |
 | 422 | `live` | A live event that has not started, or a premiere |
 | 422 | `extract_failed` | Anything else yt-dlp reports |
@@ -131,18 +133,24 @@ curl -s -H "$H" http://local-media-fetcher:8099/api/v1/jobs/3f9a0c1b2d4e5f60
 curl -s -H "$H" -o zoo.m4a http://local-media-fetcher:8099/api/v1/jobs/3f9a0c1b2d4e5f60/file
 ```
 
-## Status page
+## The web page
 
-**Open web UI** on the app's page shows the versions, the settings and the jobs with their progress. It only answers Home Assistant's ingress proxy, so only administrators see it, and it never shows the token.
+**Open web UI** on the app's page opens a page that only answers Home Assistant's ingress proxy, so only administrators see it. It never shows the token.
+
+- **Fetch:** paste a link, pick a format (audio m4a, mp3, opus, flac, wav or the source's own format; video mp4, mkv or the source's own container) and press *Fetch*. The job appears in the list below; when it is done, its row has a **Download** link that saves the file under the media's title.
+- **Jobs:** every job with its state, progress or result, and a *Cancel* or *Remove* button. The list refreshes every 10 seconds; jobs started through the API are there too.
+- **Service and Settings:** the versions the service runs with, with a link to download the API definition (`openapi.yaml`), and the options in use.
+
+The page talks to endpoints of its own that take no token; the ingress session is their lock, and the ones that change something take JSON with an `X-Requested-With` header only, which a form on another site cannot send.
 
 ## Security
 
 - **The token is the only lock.** Whoever has it can make the app fetch anything from the internet and read the files of every job. The random token per start is the safer choice; a fixed one belongs in a password manager, not in a script that others can read. The token never appears in the log.
 - **Stay in the app network.** Map port 8099 to the host only when a client outside Home Assistant needs it, and never expose it to the internet: there is no TLS and no rate limit.
-- **Your home network is out of bounds.** Before yt-dlp runs, the app resolves the link's host and refuses the link when the address part is not a plain `host[:port]`, when the host does not resolve, or when any of its addresses is not public: loopback, private ranges, link-local, the Supervisor's network. While yt-dlp runs, every name it resolves goes through the same check, so a redirect or a page that points to a device in your network ends in an error as well. So a link cannot make the app read from your network or from Home Assistant itself, whatever `allow_any_site` says. Only what ffmpeg fetches on its own (rare: some streaming protocols) is not covered.
+- **Your home network is out of bounds.** Before yt-dlp runs, the app resolves the link's host and refuses the link when the address part is not a plain `host[:port]`, when the host does not resolve, or when any of its addresses is not public: loopback, private ranges, link-local, the Supervisor's network. While yt-dlp runs, every name it resolves goes through the same check, so a redirect or a page that points to a device in your network ends in an error as well. So a link cannot make the app read from your network or from Home Assistant itself, whatever `allow_any_site` says.
 - **`allow_any_site` widens the reach.** yt-dlp's generic extractor tries any public site it is given and follows what it finds there. Leave it off unless you need sites without an extractor, and then give the token only to clients you trust.
 - **What you may fetch is your business.** The app does not check whether you are allowed to copy a video or a track; the terms of the site and the rights of the owner apply. It sends no cookies and no login, so what needs an account stays out of reach.
-- Jobs run with yt-dlp's cache off, without cookies, and only with the extractors of yt-dlp's default set (minus the generic one). Files are kept under the app's data, excluded from backups, and deleted after `keep_minutes` and at every start.
+- Jobs run with yt-dlp's cache off, without cookies, only with the extractors of yt-dlp's default set (minus the generic one), and only with yt-dlp's own downloaders: a stream that would need ffmpeg, rtmpdump or another program to fetch it (RTMP, RTSP, MMS) is refused as `unsupported_url`, because those resolve names on their own, outside the address check. Deno runs without network access. Files are kept under the app's data, excluded from backups, and deleted after `keep_minutes` and at every start.
 
 ## Known limitations
 

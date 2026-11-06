@@ -10,4 +10,6 @@ All notable changes to this app are documented here. The format follows [Keep a 
 - yt-dlp with Deno as its JavaScript runtime, so sites that require it work, and ffmpeg for conversions
 - Bearer token: a random one per start, announced to Home Assistant through the Supervisor's discovery, or a fixed one from the options
 - Options `max_jobs`, `keep_minutes`, `allow_any_site` and `log_level`; the generic extractor stays off unless `allow_any_site` is on, and links to non-public addresses (the home network, Home Assistant, the Supervisor) are refused, both before yt-dlp runs and for every name it resolves while it runs
-- A status page behind ingress with versions, settings and the jobs
+- A web page behind ingress (administrators only): a form that fetches a link in the chosen format with a download link for the file, the jobs with their progress and a cancel or remove button, the versions and settings in use, and a download of the API definition
+- The API is described in `openapi.yaml` (OpenAPI 3.1), served at `/api/v1/openapi.yaml` without a token
+- Streams that only ffmpeg, rtmpdump or another program could fetch are refused; yt-dlp downloads with its own downloaders only, and Deno runs without network access

@@ -23,7 +23,7 @@ VIDEO = {
     "extractor": "youtube", "webpage_url": "https://www.youtube.com/watch?v=abc123",
     "thumbnail": "https://i.example.test/abc123.jpg", "ext": "webm", "is_live": False,
     "formats": [{"format_id": "251", "ext": "webm", "acodec": "opus", "vcodec": "none"}],
-    "requested_formats": None,
+    "protocol": "https", "requested_formats": None,
 }
 
 

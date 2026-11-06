@@ -32,6 +32,11 @@ VIDEO_FORMATS = ("mp4", "mkv", "best")
 KINDS = {"audio": AUDIO_FORMATS, "video": VIDEO_FORMATS}
 # Postprocessors whose start means the job converts (yt-dlp's names)
 CONVERTERS = frozenset({"ExtractAudio", "VideoRemuxer", "VideoConvertor", "Merger"})
+# Stream protocols yt-dlp downloads itself, in the job's thread, where the
+# address guard applies; the others need ffmpeg, rtmpdump or mplayer, which
+# resolve names on their own
+PROTOCOLS = frozenset({"http", "https", "m3u8", "m3u8_native", "http_dash_segments",
+                       "http_dash_segments_generator", "ism", "f4m", "websocket_frag", "bunnycdn", "soopvod"})
 MESSAGE_LENGTH = 200
 
 # Error codes of the API, by what yt-dlp says; the first match wins
@@ -186,6 +191,11 @@ def base_options(allow_any_site: bool) -> dict:
         "socket_timeout": 30,
         "retries": 3,
         "fragment_retries": 3,
+        # yt-dlp's own downloaders only, and fragments in the job's thread:
+        # the address guard covers what this thread resolves, not what a
+        # subprocess or another thread would
+        "external_downloader": {"default": "native"},
+        "concurrent_fragment_downloads": 1,
     }
 
 
@@ -212,6 +222,13 @@ def job_options(allow_any_site: bool, kind: str, fmt: str, directory: Path, job_
     else:
         opts["format"] = "bestvideo+bestaudio/best"
     return opts
+
+
+def stream_protocols(info: dict) -> list[str]:
+    """The protocols of the streams yt-dlp picked: of every part of a merge,
+    or of the one format."""
+    parts = info.get("requested_formats") or [info]
+    return [str(part.get("protocol") or "") for part in parts]
 
 
 def summary(info: dict) -> dict:
@@ -311,6 +328,9 @@ class Fetcher:
             duration = info.get("duration")
             if max_duration and isinstance(duration, (int, float)) and duration > max_duration:
                 raise FetchError("too_long", f"{int(duration)} s long, the limit is {max_duration} s")
+            odd = [proto for proto in stream_protocols(info) if proto not in PROTOCOLS]
+            if odd:
+                raise FetchError("unsupported_url", f"stream protocol {odd[0] or 'unknown'} is not supported")
             report.probed(info)
             check_cancelled()
             phase = "downloading"

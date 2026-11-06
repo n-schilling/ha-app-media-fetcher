@@ -169,3 +169,92 @@ async def test_private_addresses_are_refused_before_a_job_starts(client, scenari
         error = (await resp.json())["error"]
         assert error["code"] == "unsupported_url" and "not a public address" in error["message"]
     assert scenario.extracted == [] and (await (await client.get("/api/v1/jobs", headers=bearer())).json()) == []
+
+
+async def test_openapi_definition_matches_the_app(client, app):
+    import yaml
+
+    resp = await client.get("/api/v1/openapi.yaml")
+    assert resp.status == 200 and resp.headers["Content-Type"].startswith("application/yaml")
+    spec = yaml.safe_load(await resp.text())
+    assert spec["openapi"].startswith("3.1")
+    routes = {(r.resource.canonical, r.method) for r in app.router.routes()
+              if r.resource.canonical.startswith("/api/v1") and r.method != "HEAD"}
+    documented = {(f"/api/v1{path}", method.upper()) for path, item in spec["paths"].items()
+                  for method in item if method in ("get", "post", "delete")}
+    assert documented == routes
+    from media_fetcher.jobs import ACTIVE
+    states = set(spec["components"]["schemas"]["Job"]["properties"]["state"]["enum"])
+    assert states == ACTIVE | {"done", "failed", "cancelled"}
+    # The page offers the definition for download, without the token
+    page = await (await client.get("/")).text()
+    assert 'href="/api/v1/openapi.yaml" download=' in page
+    resp = await client.get("/api/v1/openapi.yaml", headers={"Authorization": "Bearer wrong"})
+    assert resp.status == 200
+
+
+async def test_openapi_version_is_the_apps(app):
+    import yaml
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1] / "media_fetcher"
+    spec = yaml.safe_load((root / "rootfs/usr/lib/media_fetcher/openapi.yaml").read_text())
+    config = yaml.safe_load((root / "config.yaml").read_text())
+    assert spec["info"]["version"] == config["version"]
+
+
+async def test_the_page_starts_jobs_and_serves_downloads(client, manager):
+    headers = {"Content-Type": "application/json", "X-Requested-With": "media-fetcher"}
+    resp = await client.post("/jobs", json={"url": URL, "kind": "audio", "format": "m4a"}, headers=headers)
+    assert resp.status == 201
+    job_id = (await resp.json())["id"]
+    wait_for(manager, job_id, "done")
+    page = await (await client.get("/", headers={"X-Ingress-Path": "/api/hassio_ingress/abc-123"})).text()
+    assert 'data-base="/api/hassio_ingress/abc-123"' in page
+    assert f'href="/api/hassio_ingress/abc-123/jobs/{job_id}/file" download' in page
+    assert f'data-delete="{job_id}"' in page and ">Remove<" in page and '<form id="fetch"' in page
+    assert 'href="/api/hassio_ingress/abc-123/api/v1/openapi.yaml"' in page
+    page = await (await client.get("/", headers={"X-Ingress-Path": "../evil"})).text()
+    assert 'data-base=""' in page
+    resp = await client.get(f"/jobs/{job_id}/file")
+    assert resp.status == 200 and resp.headers["Content-Type"] == "audio/mp4"
+    assert resp.headers["Content-Disposition"] == 'attachment; filename="A talk.m4a"'
+    assert await resp.read() == b"x" * 1000
+    resp = await client.delete(f"/jobs/{job_id}", headers=headers)
+    assert resp.status == 204
+    resp = await client.get(f"/jobs/{job_id}/file")
+    assert resp.status == 404 and (await resp.json())["error"]["code"] == "not_found"
+
+
+async def test_the_pages_endpoints_need_the_ingress_peer_and_the_header(client, manager, aiohttp_client):
+    resp = await client.post("/jobs", json={"url": URL, "kind": "audio"})
+    assert resp.status == 400 and (await resp.json())["error"]["code"] == "bad_request"
+    resp = await client.delete("/jobs/x")
+    assert resp.status == 400
+    assert manager.snapshots() == []
+    other = await aiohttp_client(create_app(manager, TOKEN, {}, "0.1.0", peers=frozenset({"172.30.32.2"})))
+    headers = {"Content-Type": "application/json", "X-Requested-With": "media-fetcher"}
+    for method, path in (("POST", "/jobs"), ("DELETE", "/jobs/x"), ("GET", "/jobs/x/file")):
+        resp = await other.request(method, path, json={"url": URL, "kind": "audio"}, headers=headers)
+        assert resp.status == 403 and (await resp.json())["error"]["code"] == "forbidden"
+    assert manager.snapshots() == []
+
+
+async def test_page_rows_show_failures_and_cancel_buttons(aiohttp_client, tmp_path):
+    gate = threading.Event()
+    scenario = Scenario(gate=gate)
+    manager = JobManager(Fetcher(False, scenario.ydl_class(), resolve=resolve), tmp_path / "jobs", 2, 3600)
+    manager.start()
+    client = await aiohttp_client(create_app(manager, TOKEN, {}, "0.1.0", peers=frozenset({"127.0.0.1"})))
+    resp = await client.post("/api/v1/jobs", json={"url": URL, "kind": "audio", "max_duration": 1}, headers=bearer())
+    failed = (await resp.json())["id"]
+    wait_for(manager, failed, "failed")
+    resp = await client.post("/api/v1/jobs", json={"url": URL, "kind": "audio"}, headers=bearer())
+    running = (await resp.json())["id"]
+    wait_for(manager, running, "downloading")
+    page = await (await client.get("/")).text()
+    assert "too_long" in page and f'data-delete="{failed}">Remove<' in page
+    assert f'data-delete="{running}">Cancel<' in page and "Download" not in page
+    gate.set()
+    wait_for(manager, running, "done")
+    manager.shutdown()
