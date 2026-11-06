@@ -130,7 +130,7 @@ async def info(request: web.Request) -> web.Response:
     try:
         result = await loop.run_in_executor(ctx.manager.probe_pool, ctx.manager.fetcher.info, url)
     except FetchError as err:
-        raise ApiError(422, err.code, err.message) from err
+        raise ApiError(400 if err.code == "invalid_url" else 422, err.code, err.message) from err
     return web.json_response(result)
 
 
@@ -141,7 +141,7 @@ async def create_job(request: web.Request) -> web.Response:
         # Resolves the host, so not in the event loop
         await asyncio.get_running_loop().run_in_executor(ctx.manager.probe_pool, ctx.manager.fetcher.check, url)
     except FetchError as err:
-        raise ApiError(422, err.code, err.message) from err
+        raise ApiError(400 if err.code == "invalid_url" else 422, err.code, err.message) from err
     job = ctx.manager.create(url, kind, fmt, max_duration)
     if job is None:
         raise ApiError(429, "busy", f"{ctx.manager.max_jobs} jobs are running, try again later")

@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 from conftest import VIDEO, Scenario, resolve
-from yt_dlp.utils import DownloadCancelled
+from yt_dlp.utils import DownloadCancelled, DownloadError
 
 from media_fetcher import fetcher as f
 from media_fetcher.fetcher import Fetcher, FetchError
@@ -213,7 +213,7 @@ def test_gate_is_honoured_by_the_fake(tmp_path):
 
 
 @pytest.mark.parametrize("url", ["https://www.youtube.com/watch?v=a", "https://x.test/v", "https://v6.test/v",
-                                 "https://93.184.216.34/v", "https://unknown.test/v"])
+                                 "https://93.184.216.34/v", "https://X.test:8443/v", "https://[2606:2800:220:1:248:1893:25c8:1946]:443/v"])
 def test_public_destinations_pass(url):
     assert f.private_destination(url, resolve) is None
 
@@ -223,9 +223,55 @@ def test_public_destinations_pass(url):
                                  "http://mapped.test/x", "http://10.0.0.1/x", "http://169.254.169.254/x",
                                  "http://100.64.0.1/x", "http://0.0.0.0/x"])
 def test_private_destinations_are_refused(url, scenario):
-    reason = f.private_destination(url, resolve)
-    assert reason and "not a public address" in reason
+    code, reason = f.private_destination(url, resolve)
+    assert code == "unsupported_url" and "not a public address" in reason
     fetcher = Fetcher(False, scenario.ydl_class(), resolve=resolve)
     with pytest.raises(FetchError) as err:
         fetcher.info(url)
     assert err.value.code == "unsupported_url" and scenario.extracted == []
+
+
+def test_an_unknown_host_is_refused_too():
+    code, reason = f.private_destination("https://unknown.test/v", resolve)
+    assert code == "unsupported_url" and "does not resolve" in reason
+
+
+@pytest.mark.parametrize("url", ["http://x.test\\@nas.lan/", "http://user@x.test/", "http://user:pw@x.test/",
+                                 "http://x.test:/", "http://x.test:99999/", "http://x.test%2f@nas.lan/",
+                                 "http://x.test /", "http://[x.test]/", "http://x.test:80:80/"])
+def test_odd_addresses_are_refused_before_anyone_parses_them(url):
+    code, reason = f.private_destination(url, resolve)
+    assert code == "invalid_url", (url, reason)
+
+
+def test_the_guard_refuses_private_addresses_while_yt_dlp_runs(tmp_path):
+    """Whatever yt-dlp connects to in a fetching thread (redirects, what a
+    page points to) is checked at resolution; other threads are not."""
+    import socket
+
+    seen = {}
+
+    class ResolvingYoutubeDL:
+        def __init__(self, params):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def extract_info(self, url, download=False):
+            try:
+                socket.getaddrinfo("localhost", 80)
+            except socket.gaierror as err:
+                seen["error"] = str(err)
+                raise DownloadError(f"ERROR: Unable to download webpage: {err}") from err
+            return {"id": "x", "title": "t"}
+
+    fetcher = Fetcher(False, ResolvingYoutubeDL, resolve=resolve)
+    with pytest.raises(FetchError) as err:
+        fetcher.info("https://x.test/v")
+    assert "not a public address" in seen["error"] and err.value.code == "extract_failed"
+    # Outside a fetch the same thread resolves anything
+    assert socket.getaddrinfo("localhost", 80)

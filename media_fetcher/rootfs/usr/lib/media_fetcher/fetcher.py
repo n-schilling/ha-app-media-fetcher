@@ -15,6 +15,8 @@ import re
 import shutil
 import socket
 import subprocess
+import threading
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Protocol
 from urllib.parse import urlsplit
@@ -61,30 +63,81 @@ class Report(Protocol):
     def progress(self, done: int, total: int | None) -> None: ...
 
 
-def private_destination(url: str, resolve=socket.getaddrinfo) -> str | None:
-    """Why the link may not be fetched from: its host resolves to a loopback,
-    private, link-local or other non-public address, such as a device in the
-    home network or the Supervisor. None when every address is public, or
-    when the name does not resolve (yt-dlp then reports that itself)."""
+HOSTNAME = re.compile(r"[\w.\-]+|[0-9A-Fa-f:.]+")
+
+
+def _address(text: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
     try:
-        hostname = urlsplit(url).hostname
+        ip = ipaddress.ip_address(text)
     except ValueError:
-        hostname = None
-    if not hostname:
-        return "the link has no host"
-    try:
-        found = resolve(hostname, None)
-    except (socket.gaierror, UnicodeError):
         return None
+    return getattr(ip, "ipv4_mapped", None) or ip
+
+
+def private_destination(url: str, resolve=socket.getaddrinfo) -> tuple[str, str] | None:
+    """Why the link may not be fetched from, as (code, reason): its address
+    part is not a plain host[:port] (user names, backslashes and the like,
+    which parsers read differently), its host does not resolve, or it
+    resolves to a loopback, private, link-local or other non-public
+    address, such as a device in the home network or the Supervisor. None
+    when every address is public."""
+    try:
+        parts = urlsplit(url)
+        host, port = parts.hostname, parts.port
+    except ValueError:
+        return "invalid_url", "the link's address is malformed"
+    if not host or "\\" in url or not HOSTNAME.fullmatch(host):
+        return "invalid_url", "the link's address is no plain host"
+    expected = (f"[{host}]" if ":" in host else host) + (f":{port}" if port is not None else "")
+    if parts.netloc.lower() != expected.lower():
+        return "invalid_url", "the link's address is no plain host"
+    try:
+        found = resolve(host, None)
+    except (OSError, UnicodeError) as err:
+        return "unsupported_url", f"{host} does not resolve ({err})"
+    if not found:
+        return "unsupported_url", f"{host} does not resolve"
     for entry in found:
-        try:
-            ip = ipaddress.ip_address(entry[4][0])
-        except ValueError:
-            continue
-        ip = getattr(ip, "ipv4_mapped", None) or ip
-        if not ip.is_global:
-            return f"{hostname} is at {ip}, not a public address"
+        ip = _address(entry[4][0])
+        if ip is not None and not ip.is_global:
+            return "unsupported_url", f"{host} is at {ip}, not a public address"
     return None
+
+
+# --- the guard at connection time ---------------------------------------------------------------
+# yt-dlp follows redirects and fetches what pages point to, so the link's
+# host is not the only one it connects to. Every name it resolves in a
+# fetching thread goes through this guard, which refuses non-public
+# addresses; other threads (the API, discovery to the Supervisor) are not
+# affected. urllib3, requests and websockets all resolve through
+# socket.getaddrinfo and connect to what it returned.
+_GUARD = threading.local()
+_resolve_unguarded = socket.getaddrinfo
+
+
+def _guarded_getaddrinfo(host, port, *args, **kwargs):
+    found = _resolve_unguarded(host, port, *args, **kwargs)
+    if getattr(_GUARD, "public_only", False):
+        for entry in found:
+            ip = _address(entry[4][0])
+            if ip is not None and not ip.is_global:
+                raise socket.gaierror(socket.EAI_FAIL, f"{host} is at {ip}, not a public address")
+    return found
+
+
+def install_guard() -> None:
+    if socket.getaddrinfo is not _guarded_getaddrinfo:
+        socket.getaddrinfo = _guarded_getaddrinfo
+
+
+@contextmanager
+def public_only():
+    """Within: every name this thread resolves must be public."""
+    _GUARD.public_only = True
+    try:
+        yield
+    finally:
+        _GUARD.public_only = False
 
 
 class YtdlpLog:
@@ -184,16 +237,17 @@ class Fetcher:
         self.allow_any_site = allow_any_site
         self._ydl_class = ydl_class
         self._resolve = resolve
+        install_guard()
 
     def check(self, url: str) -> None:
         """Refuses a link to a non-public address before yt-dlp sees it."""
-        reason = private_destination(url, self._resolve)
-        if reason:
-            raise FetchError("unsupported_url", reason)
+        refused = private_destination(url, self._resolve)
+        if refused:
+            raise FetchError(*refused)
 
     def info(self, url: str) -> dict:
         self.check(url)
-        with self._ydl_class(probe_options(self.allow_any_site)) as ydl:
+        with self._ydl_class(probe_options(self.allow_any_site)) as ydl, public_only():
             return summary(self._extract(ydl, url))
 
     def _extract(self, ydl, url: str) -> dict:
@@ -250,7 +304,7 @@ class Fetcher:
         opts["postprocessor_hooks"] = [on_postprocess]
         opts["post_hooks"] = [final.append]
         directory.mkdir(parents=True, exist_ok=True)
-        with self._ydl_class(opts) as ydl:
+        with self._ydl_class(opts) as ydl, public_only():
             info = self._extract(ydl, url)
             if info.get("is_live"):
                 raise FetchError("live", "live streams cannot be fetched")
