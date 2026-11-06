@@ -293,6 +293,27 @@ def test_streams_that_need_another_program_are_refused(info, tmp_path):
 
 
 @pytest.mark.parametrize("info", [
+    {**VIDEO, "protocol": "websocket_frag"},
+    {**VIDEO, "protocol": "bunnycdn"},
+])
+def test_streams_of_other_downloaders_are_refused_too(info, tmp_path):
+    scenario = Scenario(info=info)
+    with pytest.raises(FetchError) as err:
+        Fetcher(False, scenario.ydl_class(), resolve=resolve).download("https://x.test/v", "audio", "m4a", None,
+                                                                       tmp_path / "j", "j", Recorder())
+    assert err.value.code == "unsupported_url"
+
+
+def test_ffmpeg_cannot_download_while_a_fetch_runs(scenario):
+    from yt_dlp.downloader.external import FFmpegFD
+
+    Fetcher(False, scenario.ydl_class(), resolve=resolve)
+    downloader = FFmpegFD.__new__(FFmpegFD)
+    with f.public_only(), pytest.raises(RuntimeError, match="ffmpeg"):
+        downloader.real_download("x.mp4", {"url": "https://x.test/stream.m3u8"})
+
+
+@pytest.mark.parametrize("info", [
     {**VIDEO, "protocol": "m3u8_native"},
     {**VIDEO, "protocol": "http_dash_segments"},
     {**VIDEO, "requested_formats": [{"protocol": "https"}, {"protocol": "m3u8"}]},

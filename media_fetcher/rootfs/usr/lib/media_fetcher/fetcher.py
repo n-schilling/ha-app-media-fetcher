@@ -22,6 +22,7 @@ from typing import Protocol
 from urllib.parse import urlsplit
 
 import yt_dlp
+from yt_dlp.downloader.external import FFmpegFD
 from yt_dlp.postprocessor import FFmpegPostProcessor
 from yt_dlp.utils import DownloadCancelled, DownloadError
 
@@ -36,7 +37,7 @@ CONVERTERS = frozenset({"ExtractAudio", "VideoRemuxer", "VideoConvertor", "Merge
 # address guard applies; the others need ffmpeg, rtmpdump or mplayer, which
 # resolve names on their own
 PROTOCOLS = frozenset({"http", "https", "m3u8", "m3u8_native", "http_dash_segments",
-                       "http_dash_segments_generator", "ism", "f4m", "websocket_frag", "bunnycdn", "soopvod"})
+                       "http_dash_segments_generator", "ism", "f4m"})
 MESSAGE_LENGTH = 200
 
 # Error codes of the API, by what yt-dlp says; the first match wins
@@ -130,9 +131,22 @@ def _guarded_getaddrinfo(host, port, *args, **kwargs):
     return found
 
 
+_ffmpeg_download = FFmpegFD.real_download
+
+
+def _guarded_ffmpeg_download(self, filename, info_dict):
+    # yt-dlp hands some HLS streams to ffmpeg halfway (ones it cannot
+    # download itself); ffmpeg resolves names on its own, outside the guard
+    if getattr(_GUARD, "public_only", False):
+        raise RuntimeError("the stream needs ffmpeg to download it, which is not allowed")
+    return _ffmpeg_download(self, filename, info_dict)
+
+
 def install_guard() -> None:
     if socket.getaddrinfo is not _guarded_getaddrinfo:
         socket.getaddrinfo = _guarded_getaddrinfo
+    if FFmpegFD.real_download is not _guarded_ffmpeg_download:
+        FFmpegFD.real_download = _guarded_ffmpeg_download
 
 
 @contextmanager
