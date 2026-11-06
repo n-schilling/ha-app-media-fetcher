@@ -49,7 +49,7 @@ Errors are `{"error": {"code": "…", "message": "…"}}`: `invalid_url`, `unsup
 
 ## Security in short
 
-The token is the only lock on the API, so keep it to the clients that need it; the random token per start never leaves the Supervisor. The API has no TLS: leave port 8099 unmapped unless a client outside Home Assistant needs it, and never expose it to the internet. `allow_any_site` lets yt-dlp's generic extractor fetch from any address, your home network included; it is off by default. The app does not check whether you are allowed to copy what you fetch; the site's terms and the owner's rights apply.
+The token is the only lock on the API, so keep it to the clients that need it; the random token per start never leaves the Supervisor. The API has no TLS: leave port 8099 unmapped unless a client outside Home Assistant needs it, and never expose it to the internet. Links to non-public addresses (your home network, Home Assistant, the Supervisor) are refused before yt-dlp runs. `allow_any_site` lets yt-dlp's generic extractor try any public site; it is off by default. The app does not check whether you are allowed to copy what you fetch; the site's terms and the owner's rights apply.
 
 ## Development
 

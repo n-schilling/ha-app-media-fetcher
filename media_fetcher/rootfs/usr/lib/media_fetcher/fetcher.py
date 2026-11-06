@@ -9,12 +9,15 @@ clean_message() into the first line without that prefix.
 
 from __future__ import annotations
 
+import ipaddress
 import logging
 import re
 import shutil
+import socket
 import subprocess
 from pathlib import Path
 from typing import Protocol
+from urllib.parse import urlsplit
 
 import yt_dlp
 from yt_dlp.postprocessor import FFmpegPostProcessor
@@ -56,6 +59,32 @@ class Report(Protocol):
     def set_state(self, state: str) -> None: ...
     def probed(self, info: dict) -> None: ...
     def progress(self, done: int, total: int | None) -> None: ...
+
+
+def private_destination(url: str, resolve=socket.getaddrinfo) -> str | None:
+    """Why the link may not be fetched from: its host resolves to a loopback,
+    private, link-local or other non-public address, such as a device in the
+    home network or the Supervisor. None when every address is public, or
+    when the name does not resolve (yt-dlp then reports that itself)."""
+    try:
+        hostname = urlsplit(url).hostname
+    except ValueError:
+        hostname = None
+    if not hostname:
+        return "the link has no host"
+    try:
+        found = resolve(hostname, None)
+    except (socket.gaierror, UnicodeError):
+        return None
+    for entry in found:
+        try:
+            ip = ipaddress.ip_address(entry[4][0])
+        except ValueError:
+            continue
+        ip = getattr(ip, "ipv4_mapped", None) or ip
+        if not ip.is_global:
+            return f"{hostname} is at {ip}, not a public address"
+    return None
 
 
 class YtdlpLog:
@@ -151,11 +180,19 @@ class Fetcher:
     """Runs yt-dlp. Blocking: call it from a thread. ydl_class stands in for
     yt_dlp.YoutubeDL in the tests."""
 
-    def __init__(self, allow_any_site: bool, ydl_class=yt_dlp.YoutubeDL) -> None:
+    def __init__(self, allow_any_site: bool, ydl_class=yt_dlp.YoutubeDL, resolve=socket.getaddrinfo) -> None:
         self.allow_any_site = allow_any_site
         self._ydl_class = ydl_class
+        self._resolve = resolve
+
+    def check(self, url: str) -> None:
+        """Refuses a link to a non-public address before yt-dlp sees it."""
+        reason = private_destination(url, self._resolve)
+        if reason:
+            raise FetchError("unsupported_url", reason)
 
     def info(self, url: str) -> dict:
+        self.check(url)
         with self._ydl_class(probe_options(self.allow_any_site)) as ydl:
             return summary(self._extract(ydl, url))
 
@@ -179,6 +216,7 @@ class Fetcher:
         """Probes, then downloads and converts into directory; returns the
         file. Raises FetchError, or DownloadCancelled when the job was
         cancelled: the hooks check at every step of yt-dlp."""
+        self.check(url)
         phase = "probing"
         final: list[str] = []
 

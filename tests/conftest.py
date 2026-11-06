@@ -141,9 +141,25 @@ def clock():
     return Clock()
 
 
+ADDRESSES = {"www.youtube.com": "142.250.74.206", "x.test": "93.184.216.34", "nas.lan": "192.168.1.20",
+             "localhost": "127.0.0.1", "supervisor": "172.30.32.2", "v6.test": "2606:2800:220:1:248:1893:25c8:1946",
+             "mapped.test": "::ffff:10.0.0.9", "example.com": "93.184.216.34"}
+
+
+def resolve(hostname, port):
+    """Stands in for socket.getaddrinfo with a fixed address book."""
+    import socket
+    try:
+        address = ADDRESSES[hostname] if hostname in ADDRESSES else str(__import__("ipaddress").ip_address(hostname))
+    except ValueError:
+        raise socket.gaierror(f"{hostname} unknown") from None
+    family = socket.AF_INET6 if ":" in address else socket.AF_INET
+    return [(family, socket.SOCK_STREAM, 6, "", (address, 0))]
+
+
 @pytest.fixture
 def fetcher(scenario):
-    return Fetcher(False, ydl_class=scenario.ydl_class())
+    return Fetcher(False, ydl_class=scenario.ydl_class(), resolve=resolve)
 
 
 @pytest.fixture

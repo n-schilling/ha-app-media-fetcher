@@ -3,7 +3,7 @@
 import threading
 
 import pytest
-from conftest import TOKEN, Scenario, bearer, create_app, wait_for
+from conftest import TOKEN, Scenario, bearer, create_app, resolve, wait_for
 
 from media_fetcher.fetcher import Fetcher
 from media_fetcher.jobs import JobManager
@@ -67,7 +67,7 @@ async def test_bad_json(client):
     (Scenario(extract_error="ERROR: [youtube] a: Unable to extract player version"), "extract_failed"),
 ])
 async def test_info_errors(aiohttp_client, tmp_path, scenario, code):
-    manager = JobManager(Fetcher(False, scenario.ydl_class()), tmp_path / "jobs", 2, 3600)
+    manager = JobManager(Fetcher(False, scenario.ydl_class(), resolve=resolve), tmp_path / "jobs", 2, 3600)
     manager.start()
     client = await aiohttp_client(create_app(manager, TOKEN, {}, "0.1.0"))
     resp = await client.post("/api/v1/info", json={"url": "https://x.test/a"}, headers=bearer())
@@ -124,7 +124,7 @@ async def test_invalid_job_requests(client, body):
 async def test_not_ready_and_busy(aiohttp_client, tmp_path):
     gate = threading.Event()
     scenario = Scenario(gate=gate)
-    manager = JobManager(Fetcher(False, scenario.ydl_class()), tmp_path / "jobs", 1, 3600)
+    manager = JobManager(Fetcher(False, scenario.ydl_class(), resolve=resolve), tmp_path / "jobs", 1, 3600)
     manager.start()
     client = await aiohttp_client(create_app(manager, TOKEN, {}, "0.1.0"))
     resp = await client.post("/api/v1/jobs", json={"url": URL, "kind": "audio"}, headers=bearer())
@@ -160,3 +160,12 @@ async def test_status_page_for_the_ingress_peer_only(client, manager, aiohttp_cl
 async def test_status_page_without_jobs(client):
     page = await (await client.get("/")).text()
     assert "No jobs." in page and "random" not in page and "from the options" in page
+
+
+async def test_private_addresses_are_refused_before_a_job_starts(client, scenario):
+    for path in ("/api/v1/info", "/api/v1/jobs"):
+        resp = await client.post(path, json={"url": "http://nas.lan/Mediasite/Play/1", "kind": "audio"}, headers=bearer())
+        assert resp.status == 422
+        error = (await resp.json())["error"]
+        assert error["code"] == "unsupported_url" and "not a public address" in error["message"]
+    assert scenario.extracted == [] and (await (await client.get("/api/v1/jobs", headers=bearer())).json()) == []

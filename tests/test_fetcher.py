@@ -4,7 +4,7 @@ import threading
 from pathlib import Path
 
 import pytest
-from conftest import VIDEO, Scenario
+from conftest import VIDEO, Scenario, resolve
 from yt_dlp.utils import DownloadCancelled
 
 from media_fetcher import fetcher as f
@@ -92,14 +92,14 @@ def test_info_of_a_link(scenario, fetcher):
 def test_info_refuses_a_playlist():
     scenario = Scenario(info={"_type": "playlist", "id": "PL1", "title": "List", "entries": []})
     with pytest.raises(FetchError) as err:
-        Fetcher(False, scenario.ydl_class()).info("https://www.youtube.com/playlist?list=PL1")
+        Fetcher(False, scenario.ydl_class(), resolve=resolve).info("https://www.youtube.com/playlist?list=PL1")
     assert err.value.code == "unsupported_url"
 
 
 def test_info_maps_extraction_errors():
     scenario = Scenario(extract_error="ERROR: [youtube] abc: Video unavailable. This video is not available")
     with pytest.raises(FetchError) as err:
-        Fetcher(False, scenario.ydl_class()).info("https://www.youtube.com/watch?v=abc")
+        Fetcher(False, scenario.ydl_class(), resolve=resolve).info("https://www.youtube.com/watch?v=abc")
     assert (err.value.code, err.value.message) == ("not_available", "Video unavailable. This video is not available")
 
 
@@ -148,7 +148,7 @@ def test_too_long_fails_before_anything_is_downloaded(scenario, fetcher, tmp_pat
 def test_a_live_stream_is_refused(tmp_path):
     scenario = Scenario(info={**VIDEO, "is_live": True, "duration": None})
     with pytest.raises(FetchError) as err:
-        Fetcher(False, scenario.ydl_class()).download("https://x.test/v", "audio", "m4a", None, tmp_path / "j", "j", Recorder())
+        Fetcher(False, scenario.ydl_class(), resolve=resolve).download("https://x.test/v", "audio", "m4a", None, tmp_path / "j", "j", Recorder())
     assert err.value.code == "live" and scenario.processed == 0
 
 
@@ -162,7 +162,7 @@ def test_a_live_stream_is_refused(tmp_path):
 ])
 def test_failures_carry_the_phase(scenario, code, message, tmp_path):
     with pytest.raises(FetchError) as err:
-        Fetcher(False, scenario.ydl_class()).download("https://x.test/v", "audio", "m4a", None, tmp_path / "j", "j", Recorder())
+        Fetcher(False, scenario.ydl_class(), resolve=resolve).download("https://x.test/v", "audio", "m4a", None, tmp_path / "j", "j", Recorder())
     assert (err.value.code, err.value.message) == (code, message)
 
 
@@ -183,7 +183,7 @@ def test_cancelling_before_the_download(fetcher, tmp_path):
 
 def test_the_file_is_found_without_a_post_hook(tmp_path):
     scenario = Scenario(converter=None)
-    fetcher = Fetcher(False, scenario.ydl_class())
+    fetcher = Fetcher(False, scenario.ydl_class(), resolve=resolve)
     path = fetcher.download("https://x.test/v", "video", "best", None, tmp_path / "j", "j", Recorder())
     assert path.name == "j.webm"
 
@@ -203,10 +203,29 @@ def test_gate_is_honoured_by_the_fake(tmp_path):
     done = threading.Event()
 
     def run():
-        Fetcher(False, scenario.ydl_class()).download("https://x.test/v", "audio", "m4a", None, tmp_path / "j", "j", report)
+        Fetcher(False, scenario.ydl_class(), resolve=resolve).download("https://x.test/v", "audio", "m4a", None, tmp_path / "j", "j", report)
         done.set()
 
     threading.Thread(target=run, daemon=True).start()
     assert not done.wait(0.2) and report.progress_seen == [(0, 1000)]
     gate.set()
     assert done.wait(2)
+
+
+@pytest.mark.parametrize("url", ["https://www.youtube.com/watch?v=a", "https://x.test/v", "https://v6.test/v",
+                                 "https://93.184.216.34/v", "https://unknown.test/v"])
+def test_public_destinations_pass(url):
+    assert f.private_destination(url, resolve) is None
+
+
+@pytest.mark.parametrize("url", ["http://nas.lan/Mediasite/Play/1", "http://localhost:8123/", "http://127.0.0.1/x",
+                                 "http://supervisor/discovery", "http://172.30.32.2/x", "http://[::1]/x",
+                                 "http://mapped.test/x", "http://10.0.0.1/x", "http://169.254.169.254/x",
+                                 "http://100.64.0.1/x", "http://0.0.0.0/x"])
+def test_private_destinations_are_refused(url, scenario):
+    reason = f.private_destination(url, resolve)
+    assert reason and "not a public address" in reason
+    fetcher = Fetcher(False, scenario.ydl_class(), resolve=resolve)
+    with pytest.raises(FetchError) as err:
+        fetcher.info(url)
+    assert err.value.code == "unsupported_url" and scenario.extracted == []

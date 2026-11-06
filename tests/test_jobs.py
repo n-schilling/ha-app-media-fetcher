@@ -3,7 +3,7 @@
 import threading
 
 import pytest
-from conftest import Scenario, wait_for
+from conftest import Scenario, resolve, wait_for
 
 from media_fetcher.fetcher import Fetcher
 from media_fetcher.jobs import JobManager, NotReady, content_type, iso
@@ -33,7 +33,7 @@ def test_too_long_fails_before_the_download(manager, scenario, tmp_path):
 
 def test_a_failed_download_keeps_no_files(tmp_path, clock):
     scenario = Scenario(download_error="ERROR: unable to download video data: HTTP Error 403: Forbidden")
-    manager = JobManager(Fetcher(False, scenario.ydl_class()), tmp_path / "jobs", 2, 3600, clock)
+    manager = JobManager(Fetcher(False, scenario.ydl_class(), resolve=resolve), tmp_path / "jobs", 2, 3600, clock)
     manager.start()
     job = manager.create("https://x.test/v", "audio", "m4a", None)
     failed = wait_for(manager, job.id, "failed")
@@ -46,7 +46,7 @@ def test_a_failed_download_keeps_no_files(tmp_path, clock):
 def test_cancelling_a_running_job(tmp_path, clock):
     gate = threading.Event()
     scenario = Scenario(gate=gate)
-    manager = JobManager(Fetcher(False, scenario.ydl_class()), tmp_path / "jobs", 2, 3600, clock)
+    manager = JobManager(Fetcher(False, scenario.ydl_class(), resolve=resolve), tmp_path / "jobs", 2, 3600, clock)
     manager.start()
     job = manager.create("https://x.test/v", "audio", "m4a", None)
     wait_for(manager, job.id, "downloading")
@@ -64,7 +64,7 @@ def test_cancelling_a_running_job(tmp_path, clock):
 def test_busy_while_max_jobs_run(tmp_path, clock):
     gate = threading.Event()
     scenario = Scenario(gate=gate)
-    manager = JobManager(Fetcher(False, scenario.ydl_class()), tmp_path / "jobs", 1, 3600, clock)
+    manager = JobManager(Fetcher(False, scenario.ydl_class(), resolve=resolve), tmp_path / "jobs", 1, 3600, clock)
     manager.start()
     first = manager.create("https://x.test/v", "audio", "m4a", None)
     assert manager.create("https://x.test/w", "audio", "m4a", None) is None
@@ -107,7 +107,7 @@ def test_start_clears_leftovers(tmp_path, fetcher):
 def test_shutdown_cancels_running_jobs(tmp_path, clock):
     gate = threading.Event()
     scenario = Scenario(gate=gate)
-    manager = JobManager(Fetcher(False, scenario.ydl_class()), tmp_path / "jobs", 2, 3600, clock)
+    manager = JobManager(Fetcher(False, scenario.ydl_class(), resolve=resolve), tmp_path / "jobs", 2, 3600, clock)
     manager.start()
     job = manager.create("https://x.test/v", "audio", "m4a", None)
     wait_for(manager, job.id, "downloading")

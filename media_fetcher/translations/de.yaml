@@ -10,7 +10,7 @@ configuration:
     description: Minuten, die ein fertiger Auftrag und seine Datei abrufbar bleiben, bevor sie gelöscht werden.
   allow_any_site:
     name: Beliebige Seiten erlauben
-    description: Auch den generischen Extractor von yt-dlp nutzen, der Medien von jeder Adresse holt, auch aus dem Heimnetz. Aus werden nur Seiten geholt, für die yt-dlp einen Extractor hat.
+    description: Auch den generischen Extractor von yt-dlp nutzen, der Medien von jeder öffentlichen Seite zu holen versucht. Aus werden nur Seiten geholt, für die yt-dlp einen Extractor hat. Links auf Adressen im eigenen Netz werden so oder so abgewiesen.
   log_level:
     name: Protokollstufe
     description: "Wie viel die App protokolliert: debug (mit jeder yt-dlp-Meldung), info, warning oder error."

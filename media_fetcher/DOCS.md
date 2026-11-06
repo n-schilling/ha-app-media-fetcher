@@ -32,7 +32,7 @@ Home Assistant hands that to an integration with the domain `media_fetcher`, or 
 | `token` | | API token. Empty: a random one at every start, announced through discovery only. Set: a fixed one, for clients that cannot use discovery |
 | `max_jobs` | `2` | Jobs that run at the same time; further requests get `429 busy` until one finishes |
 | `keep_minutes` | `60` | Minutes a finished job and its file stay available; then they are deleted. Everything is deleted when the app starts |
-| `allow_any_site` | `false` | Also use yt-dlp's *generic* extractor, which tries to fetch media from any address, your home network included. Off, only sites yt-dlp has an extractor for are fetched |
+| `allow_any_site` | `false` | Also use yt-dlp's *generic* extractor, which tries to fetch media from any public site. Off, only sites yt-dlp has an extractor for are fetched |
 | `log_level` | `info` | How much the app writes to its log: `debug` (with every message of yt-dlp, warnings included), `info`, `warning` or `error` |
 
 ## API
@@ -67,7 +67,7 @@ What a link holds, without downloading. Body: `{"url": "https://…"}`.
 | Status | `code` | Meaning |
 |---|---|---|
 | 400 | `invalid_url` | Not an http or https address |
-| 422 | `unsupported_url` | No extractor for this address (or a playlist) |
+| 422 | `unsupported_url` | No extractor for this address, a playlist, or a host at a non-public address |
 | 422 | `not_available` | The site refuses it: unavailable, private, removed, members only, sign-in required, not in your country |
 | 422 | `live` | A live event that has not started, or a premiere |
 | 422 | `extract_failed` | Anything else yt-dlp reports |
@@ -83,7 +83,7 @@ Starts a fetch. Body:
 | `format` | Audio: `m4a` (default), `mp3`, `opus`, `flac`, `wav` or `best`. Video: `mp4` (default), `mkv` or `best` |
 | `max_duration` | Optional: seconds; a longer video fails with `too_long` before anything is downloaded |
 
-Answers `201 {"id": "…", "state": "queued"}`, or `429 busy` while `max_jobs` jobs are running; `400 invalid_request` names a wrong field.
+Answers `201 {"id": "…", "state": "queued"}`, or `429 busy` while `max_jobs` jobs are running; `400 invalid_request` names a wrong field, `400 invalid_url` and `422 unsupported_url` mean what they mean for `info`.
 
 Audio takes the best audio stream, preferring one that already has the wanted format, and converts it with ffmpeg where needed; a stream that already has the codec is copied, not re-encoded (AAC into m4a, for example). `best` keeps the stream's own format (m4a, opus, …). Video takes the best video and audio streams, merged into the wanted container; `mp4` prefers mp4 and m4a streams and remuxes without re-encoding, `best` keeps whatever container the merge produces.
 
@@ -139,7 +139,8 @@ curl -s -H "$H" -o zoo.m4a http://local-media-fetcher:8099/api/v1/jobs/3f9a0c1b2
 
 - **The token is the only lock.** Whoever has it can make the app fetch anything from the internet and read the files of every job. The random token per start is the safer choice; a fixed one belongs in a password manager, not in a script that others can read. The token never appears in the log.
 - **Stay in the app network.** Map port 8099 to the host only when a client outside Home Assistant needs it, and never expose it to the internet: there is no TLS and no rate limit.
-- **`allow_any_site` reaches your home network.** yt-dlp's generic extractor fetches from any address it is given, including devices in your network that the app can reach. Leave it off unless you need sites without an extractor, and then give the token only to clients you trust.
+- **Your home network is out of bounds.** Before yt-dlp runs, the app resolves the link's host and refuses it when any of its addresses is not public: loopback, private ranges, link-local, the Supervisor's network. So a link cannot make the app read from a device in your network or from Home Assistant itself, whatever `allow_any_site` says. The check looks at the link once; a public site that redirects to a private address is not caught.
+- **`allow_any_site` widens the reach.** yt-dlp's generic extractor tries any public site it is given and follows what it finds there. Leave it off unless you need sites without an extractor, and then give the token only to clients you trust.
 - **What you may fetch is your business.** The app does not check whether you are allowed to copy a video or a track; the terms of the site and the rights of the owner apply. It sends no cookies and no login, so what needs an account stays out of reach.
 - Jobs run with yt-dlp's cache off, without cookies, and only with the extractors of yt-dlp's default set (minus the generic one). Files are kept under the app's data, excluded from backups, and deleted after `keep_minutes` and at every start.
 
@@ -150,7 +151,7 @@ curl -s -H "$H" -o zoo.m4a http://local-media-fetcher:8099/api/v1/jobs/3f9a0c1b2
 - `done_bytes` and `total_bytes` follow one stream at a time: a video download restarts them for its audio stream.
 - Cancelling takes effect at yt-dlp's next progress step; a conversion that is already running finishes first, then its files are deleted.
 - yt-dlp needs updates when sites change; the app pins its version and gets a new release when yt-dlp has one worth it. If a site stops working, check for an update of the app first.
-- The image is large (about 700 MB): Debian's ffmpeg, Deno and yt-dlp.
+- The image is large (about 1 GB unpacked): Debian's ffmpeg with its libraries, Deno and yt-dlp.
 
 ## Support
 
