@@ -1,4 +1,4 @@
-"""Runs the service: options, the job manager, the API, discovery."""
+"""Runs the service: options, the job manager, the API."""
 
 from __future__ import annotations
 
@@ -16,7 +16,6 @@ from . import config as cfg_module
 from .api import PORT, create_app
 from .fetcher import Fetcher, versions
 from .jobs import JobManager
-from .supervisor import announce
 
 LOGGER = logging.getLogger("media_fetcher")
 JOBS = Path("/data/jobs")
@@ -41,23 +40,22 @@ async def serve(cfg: cfg_module.Config, manager: JobManager, found: dict, versio
     host = hostname()
     app = create_app(manager, cfg.token, found, version, slug=host.replace("-", "_"),
                      settings={"max_jobs": cfg.max_jobs, "keep_minutes": cfg.keep_minutes,
-                               "allow_any_site": cfg.allow_any_site, "token_fixed": cfg.token_fixed})
+                               "allow_any_site": cfg.allow_any_site, "token_set": bool(cfg.token)})
     runner = web.AppRunner(app, access_log=None)
     await runner.setup()
     await web.TCPSite(runner, "0.0.0.0", PORT).start()
-    LOGGER.info("API on port %d, token %s", PORT, "from the options" if cfg.token_fixed else "random for this start")
+    LOGGER.info("API on port %d: Home Assistant needs no token, other clients %s", PORT,
+                "take the token from the options" if cfg.token else "are not let in (no token set)")
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGTERM, signal.SIGINT):
         loop.add_signal_handler(sig, stop.set)
     expirer = asyncio.create_task(expire_loop(manager))
-    announcer = asyncio.create_task(announce(host, PORT, cfg.token))
     try:
         await stop.wait()
         LOGGER.info("Stopping")
     finally:
-        for task in (expirer, announcer):
-            task.cancel()
+        expirer.cancel()
         manager.shutdown()
         await runner.cleanup()
 

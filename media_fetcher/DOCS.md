@@ -11,25 +11,19 @@ It is not tied to one site or one use: `info` tells what a link holds, a job fet
 
 ## How clients reach it
 
-The service listens on port 8099 inside Home Assistant's app network, where other apps and Home Assistant Core reach it by the app's host name (the slug with dashes, e.g. `local-media-fetcher` for a locally installed copy). Every request but `health` needs the API token as `Authorization: Bearer <token>`.
+The service listens on port 8099 inside Home Assistant's app network, where Home Assistant Core and other apps reach it by the app's host name: the slug with dashes, e.g. `local-media-fetcher` for a locally installed copy. An integration finds the app through the Supervisor's list of installed apps (a slug that ends in `_media_fetcher`, the host name from the slug, port 8099); the app sends no discovery message.
 
-**Discovery.** At every start the app tells the Supervisor where it is and which token it takes:
+**Home Assistant Core needs no token.** Core runs in the host's network, so its requests enter the app network from the network's address on the host, 172.30.32.1. Requests from that address pass without a token. The app looks at the connection's own address only, never at a forwarded header.
 
-```json
-{"service": "media_fetcher", "config": {"host": "<host name>", "port": 8099, "token": "<token>"}}
-```
+**Everyone else needs the token.** Other apps, and clients in your network when the port is mapped, send `Authorization: Bearer <token>` on every request but `health`, with the token from the `token` option. With the option empty (the default) there is no token, and the API answers Home Assistant Core alone. A set token stays the same across restarts; treat it like a password.
 
-Home Assistant hands that to an integration with the domain `media_fetcher`, or an app reads it through the Supervisor's discovery API. With the `token` option empty (the default) the token is random and new at every start, so it only exists in that message: nobody who does not go through the Supervisor can know it.
-
-**A fixed token.** For clients that do not learn the token through discovery, set `token` in the options; then it stays the same across restarts. Treat it like a password.
-
-**Outside the app network.** The API is not reachable from your network unless you map the port under **Network** on the app's page. Do that only with a fixed token and a network you trust: the token crosses it in clear text, there is no TLS.
+**Outside the app network.** The API is not reachable from your network unless you map the port under **Network** on the app's page. Do that only with a token set and a network you trust: the token crosses it in clear text, there is no TLS. The [security notes](#security) say what a mapped port does to the address check.
 
 ## Options
 
 | Option | Default | Meaning |
 |---|---|---|
-| `token` | | API token. Empty: a random one at every start, announced through discovery only. Set: a fixed one, for clients that cannot use discovery |
+| `token` | | API token for clients other than Home Assistant Core. Empty: there is none, and the API answers Home Assistant alone. Set: other apps and, with the port mapped, programs in your network send it |
 | `max_jobs` | `2` | Jobs that run at the same time; further requests get `429 busy` until one finishes |
 | `keep_minutes` | `60` | Minutes a finished job and its file stay available; then they are deleted. Everything is deleted when the app starts |
 | `allow_any_site` | `false` | Also use yt-dlp's *generic* extractor, which tries to fetch media from any public site. Off, only sites yt-dlp has an extractor for are fetched |
@@ -43,13 +37,13 @@ Base: `http://<host>:8099/api/v1`, JSON in and out. Errors come as
 {"error": {"code": "not_available", "message": "Video unavailable. This video is not available"}}
 ```
 
-with yt-dlp's message shortened to its first line, at most 200 characters, without the `ERROR: [site] id:` prefix. Without a valid token every endpoint but `health` answers `401 unauthorized`.
+with yt-dlp's message shortened to its first line, at most 200 characters, without the `ERROR: [site] id:` prefix. Every endpoint but `health` and `openapi.yaml` answers `401 unauthorized` to a request that neither comes from Home Assistant Core nor carries the token.
 
 The whole API is described in [`openapi.yaml`](rootfs/usr/lib/media_fetcher/openapi.yaml) (OpenAPI 3.1), which the service also serves at `GET /api/v1/openapi.yaml` without a token.
 
 ### `GET /health`
 
-No token needed. The versions the service runs with; `js_runtime` or `ffmpeg` is `null` when missing.
+No token needed from anyone. The versions the service runs with; `js_runtime` or `ffmpeg` is `null` when missing.
 
 ```json
 {"ok": true, "version": "0.1.0", "yt_dlp": "2026.10.26", "js_runtime": "deno 2.9.8", "ffmpeg": "7.1.2"}
@@ -122,6 +116,8 @@ The file, with `Content-Type` by its format (`audio/mp4` for m4a, `audio/mpeg`, 
 
 ### Example
 
+From Home Assistant Core, leave the `Authorization` header out.
+
 ```bash
 H='Authorization: Bearer <token>'
 curl -s -H "$H" -X POST http://local-media-fetcher:8099/api/v1/jobs \
@@ -145,7 +141,7 @@ The page talks to endpoints of its own that take no token; the ingress session i
 
 ## Security
 
-- **The token is the only lock.** Whoever has it can make the app fetch anything from the internet and read the files of every job. The random token per start is the safer choice; a fixed one belongs in a password manager, not in a script that others can read. The token never appears in the log.
+- **Home Assistant is trusted by its address, everyone else by the token.** Whoever gets past that lock can make the app fetch anything from the internet and read the files of every job. The address 172.30.32.1 is the host's side of the app network: besides Home Assistant Core it belongs to everything else that runs in the host's network, such as apps with `host_network` and the operating system itself, and with the port mapped also to any app that connects to the mapped port through the host's address, because Docker's proxy hands that connection on from the host. So leave the port unmapped unless you need it, and know which apps run in the host's network. A set token belongs in a password manager, not in a script that others can read; it never appears in the log.
 - **Stay in the app network.** Map port 8099 to the host only when a client outside Home Assistant needs it, and never expose it to the internet: there is no TLS and no rate limit.
 - **Your home network is out of bounds.** Before yt-dlp runs, the app resolves the link's host and refuses the link when the address part is not a plain `host[:port]`, when the host does not resolve, or when any of its addresses is not public: loopback, private ranges, link-local, the Supervisor's network. While yt-dlp runs, every name it resolves goes through the same check, so a redirect or a page that points to a device in your network ends in an error as well. So a link cannot make the app read from your network or from Home Assistant itself, whatever `allow_any_site` says.
 - **`allow_any_site` widens the reach.** yt-dlp's generic extractor tries any public site it is given and follows what it finds there. Leave it off unless you need sites without an extractor, and then give the token only to clients you trust.

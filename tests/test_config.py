@@ -13,16 +13,16 @@ def write(tmp_path, **options):
     return path
 
 
-def test_defaults_and_a_random_token(tmp_path):
+def test_defaults_without_a_token(tmp_path):
     cfg = load(write(tmp_path))
     assert (cfg.max_jobs, cfg.keep_minutes, cfg.allow_any_site, cfg.log_level) == (2, 60, False, "INFO")
-    assert not cfg.token_fixed and len(cfg.token) >= 32
-    assert load(write(tmp_path)).token != cfg.token
+    assert cfg.token == ""
+    assert load(write(tmp_path, token="  ")).token == ""
 
 
 def test_a_set_token_is_kept(tmp_path):
     cfg = load(write(tmp_path, token=" my-token ", max_jobs=4, keep_minutes=5, allow_any_site=True, log_level="debug"))
-    assert (cfg.token, cfg.token_fixed) == ("my-token", True)
+    assert cfg.token == "my-token"
     assert (cfg.max_jobs, cfg.keep_minutes, cfg.allow_any_site, cfg.log_level) == (4, 5, True, "DEBUG")
 
 

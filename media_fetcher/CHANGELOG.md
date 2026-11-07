@@ -2,6 +2,17 @@
 
 All notable changes to this app are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the app uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-11-07
+
+### Changed
+
+- Home Assistant Core needs no token: requests from its address in the app network (172.30.32.1, the host's side of it) pass without one. Every other client still needs the token from the `token` option; with the option empty there is no token at all, and the API answers Home Assistant alone
+- The `token` option is thereby for other clients only; the random token per start is gone with the discovery it was announced through
+
+### Removed
+
+- Discovery through the Supervisor. Home Assistant took the service name for an integration domain and logged "Cannot find integration media_fetcher" at every start of the app; the Supervisor accepts only service names fixed in the app's config, and only Home Assistant Core may read the messages, so no other app could have used them. An integration finds the app through the Supervisor's list of installed apps instead, and the app no longer asks for the Supervisor API (`hassio_api`). A message that 0.1.0 left in the Supervisor stays until the app is uninstalled, and Home Assistant logs the line above once more at each of its own starts until then
+
 ## [0.1.0] - 2026-11-06
 
 ### Added

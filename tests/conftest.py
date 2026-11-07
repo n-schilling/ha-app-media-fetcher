@@ -172,9 +172,9 @@ def manager(tmp_path, fetcher, clock):
 
 @pytest.fixture
 def app(manager):
-    return create_app(manager, TOKEN, VERSIONS, "0.1.0", peers=frozenset({"127.0.0.1"}),
+    return create_app(manager, TOKEN, VERSIONS, "0.2.0", page_peers=frozenset({"127.0.0.1"}),
                       slug="local_media_fetcher", settings={"max_jobs": 2, "keep_minutes": 60,
-                                                            "allow_any_site": False, "token_fixed": True})
+                                                            "allow_any_site": False, "token_set": True})
 
 
 @pytest.fixture

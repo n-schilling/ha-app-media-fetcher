@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Media Fetcher
-  version: 0.1.0
+  version: 0.2.0
   summary: Fetches audio or video from links yt-dlp understands, as a service in Home Assistant's app network
   description: |
     A small HTTP service of the Media Fetcher app for Home Assistant. `info` tells what a link
@@ -9,11 +9,12 @@ info:
     video (mp4, mkv or the source's own container) with yt-dlp, Deno as its JavaScript runtime
     and ffmpeg for conversions, and serves the file for a while.
 
-    Every request but `health` and this definition carries `Authorization: Bearer <token>`.
-    The token is announced to Home Assistant through the Supervisor's discovery
-    (`{"service": "media_fetcher", "config": {"host", "port", "token"}}`) or set in the app's
-    options. Errors are `{"error": {"code": "...", "message": "..."}}`; yt-dlp's messages are
-    shortened to their first line, at most 200 characters.
+    Home Assistant Core needs no token: the service knows it by its address in the app network
+    (172.30.32.1, the host's side of it). Every other client sends `Authorization: Bearer <token>`
+    with the token from the app's `token` option on every request but `health` and this
+    definition; with the option empty, only Home Assistant gets in. Errors are
+    `{"error": {"code": "...", "message": "..."}}`; yt-dlp's messages are shortened to their first
+    line, at most 200 characters.
   license:
     name: Apache-2.0
     identifier: Apache-2.0
@@ -255,7 +256,7 @@ components:
     bearer:
       type: http
       scheme: bearer
-      description: The app's API token, from the Supervisor's discovery or the `token` option
+      description: The app's API token from the `token` option; not needed by Home Assistant Core
   parameters:
     JobId:
       name: id
@@ -273,7 +274,7 @@ components:
           schema:
             $ref: "#/components/schemas/Error"
     Unauthorized:
-      description: No valid bearer token (`unauthorized`)
+      description: No valid bearer token, and not Home Assistant Core (`unauthorized`)
       headers:
         WWW-Authenticate:
           schema:

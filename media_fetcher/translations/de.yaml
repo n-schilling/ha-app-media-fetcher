@@ -1,7 +1,7 @@
 configuration:
   token:
     name: API-Token
-    description: Optional. Ein festes Token für Clients, die es nicht über die Discovery des Supervisors erfahren; leer erzeugt die App bei jedem Start ein neues zufälliges Token und meldet es nur per Discovery.
+    description: Optional. Home Assistant braucht kein Token. Setze eines für andere Clients, etwa andere Apps oder, bei gemapptem Port, Programme im eigenen Netz; leer antwortet die API nur Home Assistant.
   max_jobs:
     name: Gleichzeitige Aufträge
     description: Wie viele Aufträge gleichzeitig laufen; weitere Anfragen bekommen „busy“, bis einer fertig ist.

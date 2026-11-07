@@ -1,7 +1,9 @@
 """The HTTP API under /api/v1 and a status page for Home Assistant's ingress.
 
 Every endpoint but health and the OpenAPI definition needs "Authorization:
-Bearer <token>". Errors are JSON: {"error": {"code": "...", "message": "..."}}.
+Bearer <token>", unless the request comes from Home Assistant Core, which the
+app knows by its address in the app network; without a token in the options
+nobody else gets in. Errors are JSON: {"error": {"code": "...", "message": "..."}}.
 
 The page at / is HTML for Home Assistant's ingress and answers only the
 ingress proxy, so only administrators see it. It shows versions, settings
@@ -34,6 +36,7 @@ HEALTH = f"{API}/health"
 OPENAPI = Path(__file__).with_name("openapi.yaml")
 OPENAPI_PATH = f"{API}/openapi.yaml"
 INGRESS_PEER = "172.30.32.2"       # the Supervisor's ingress proxy
+CORE_PEER = "172.30.32.1"          # Home Assistant Core: the host's side of the app network
 INGRESS_HEADER = "X-Ingress-Path"  # the Supervisor's path prefix for the page's links
 PAGE_HEADER = "X-Requested-With"   # on the page's own POST and DELETE
 INGRESS_PATH = re.compile(r"/[A-Za-z0-9_\-/]*")
@@ -55,10 +58,11 @@ class ApiError(Exception):
 @dataclass
 class Context:
     manager: JobManager
-    token: str
+    token: str                           # for clients other than Home Assistant Core; "" when none
     versions: dict                       # yt_dlp, js_runtime, ffmpeg
     version: str                         # the app's
-    peers: frozenset[str]                # who may see the status page
+    page_peers: frozenset[str]           # who may see the status page: the ingress proxy
+    core_peers: frozenset[str]           # who needs no token: Home Assistant Core
     slug: str | None = None              # for the link to the app's settings
     settings: dict = field(default_factory=dict)
 
@@ -79,13 +83,21 @@ async def errors(request: web.Request, handler) -> web.StreamResponse:
         raise
 
 
+def bearer_ok(request: web.Request, token: str) -> bool:
+    scheme, _, value = request.headers.get("Authorization", "").partition(" ")
+    return bool(token) and scheme.lower() == "bearer" and hmac.compare_digest(value.strip(), token)
+
+
 @web.middleware
 async def auth(request: web.Request, handler) -> web.StreamResponse:
+    """Home Assistant Core is known by the connection's own address (never a
+    forwarded header); everyone else needs the token from the options."""
     if request.path.startswith(API) and request.path not in (HEALTH, OPENAPI_PATH):
-        scheme, _, value = request.headers.get("Authorization", "").partition(" ")
-        if scheme.lower() != "bearer" or not hmac.compare_digest(value.strip(), request.app["ctx"].token):
-            return error(401, "unauthorized", "a valid bearer token is required",
-                         **{"WWW-Authenticate": "Bearer"})
+        ctx: Context = request.app["ctx"]
+        if request.remote not in ctx.core_peers and not bearer_ok(request, ctx.token):
+            message = ("a valid bearer token is required" if ctx.token
+                       else "no token is set: only Home Assistant may call the API")
+            return error(401, "unauthorized", message, **{"WWW-Authenticate": "Bearer"})
     return await handler(request)
 
 
@@ -215,7 +227,7 @@ async def delete_job(request: web.Request) -> web.Response:
 
 # --- the page's own endpoints: the ingress session is the lock ----------------------------------
 def page_only(request: web.Request, writing: bool = False) -> None:
-    if request.remote not in request.app["ctx"].peers:
+    if request.remote not in request.app["ctx"].page_peers:
         raise ApiError(403, "forbidden", "only through Home Assistant")
     if writing and not request.headers.get(PAGE_HEADER):
         raise ApiError(400, "bad_request", f"the page sends {PAGE_HEADER}")
@@ -447,7 +459,8 @@ def render(ctx: Context, jobs: list[dict], base: str = "") -> str:
     ])
     s = ctx.settings
     settings = _kv([
-        ("API token", "from the options" if s.get("token_fixed") else "random, new at every start"),
+        ("API token", "from the options, for clients other than Home Assistant" if s.get("token_set")
+         else "none: Home Assistant only"),
         ("Concurrent jobs", esc(str(s.get("max_jobs", "–")))),
         ("Keep finished jobs", f"{esc(str(s.get('keep_minutes', '–')))} min"),
         ("Allow any site", "yes" if s.get("allow_any_site") else "no"),
@@ -478,7 +491,7 @@ def ingress_base(request: web.Request) -> str:
 
 async def status_page(request: web.Request) -> web.Response:
     ctx: Context = request.app["ctx"]
-    if request.remote not in ctx.peers:
+    if request.remote not in ctx.page_peers:
         return web.Response(status=403, text="only through Home Assistant")
     return web.Response(text=render(ctx, ctx.manager.snapshots(), ingress_base(request)), content_type="text/html",
                         headers={"Cache-Control": "no-store"})
@@ -486,10 +499,11 @@ async def status_page(request: web.Request) -> web.Response:
 
 # --- the application -------------------------------------------------------------------------
 def create_app(manager: JobManager, token: str, versions: dict, version: str,
-               peers: frozenset[str] = frozenset({INGRESS_PEER}), slug: str | None = None,
+               page_peers: frozenset[str] = frozenset({INGRESS_PEER}),
+               core_peers: frozenset[str] = frozenset({CORE_PEER}), slug: str | None = None,
                settings: dict | None = None) -> web.Application:
     app = web.Application(middlewares=[errors, auth], client_max_size=BODY_LENGTH)
-    app["ctx"] = Context(manager, token, versions, version, peers, slug, settings or {})
+    app["ctx"] = Context(manager, token, versions, version, page_peers, core_peers, slug, settings or {})
     app.router.add_get(HEALTH, health)
     app.router.add_get(OPENAPI_PATH, openapi)
     app.router.add_post(f"{API}/info", info)

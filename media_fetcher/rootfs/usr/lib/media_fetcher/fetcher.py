@@ -114,8 +114,7 @@ def private_destination(url: str, resolve=socket.getaddrinfo) -> tuple[str, str]
 # yt-dlp follows redirects and fetches what pages point to, so the link's
 # host is not the only one it connects to. Every name it resolves in a
 # fetching thread goes through this guard, which refuses non-public
-# addresses; other threads (the API, discovery to the Supervisor) are not
-# affected. urllib3, requests and websockets all resolve through
+# addresses; other threads (the API) are not affected. urllib3, requests and websockets all resolve through
 # socket.getaddrinfo and connect to what it returned.
 _GUARD = threading.local()
 _resolve_unguarded = socket.getaddrinfo

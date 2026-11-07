@@ -1,7 +1,7 @@
 configuration:
   token:
     name: API token
-    description: Optional. Set a token for clients that do not learn it through the Supervisor's discovery; empty, the app creates a new random token at every start and announces it through discovery only.
+    description: Optional. Home Assistant needs no token. Set one for other clients, such as other apps or, with the port mapped, programs in your network; empty, the API answers Home Assistant alone.
   max_jobs:
     name: Concurrent jobs
     description: How many fetch jobs run at the same time; further requests get "busy" until one finishes.

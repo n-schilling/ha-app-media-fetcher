@@ -26,7 +26,7 @@ See [the documentation](media_fetcher/DOCS.md) for the options, the API, securit
 
 ## The API in short
 
-Base `http://<host>:8099/api/v1`, JSON, `Authorization: Bearer <token>` on everything but `health`. The host is the app's name in the app network (e.g. `local-media-fetcher`); the token is random at every start and announced to Home Assistant through the Supervisor's discovery, or fixed through the `token` option.
+Base `http://<host>:8099/api/v1`, JSON. The host is the app's name in the app network (e.g. `local-media-fetcher`). Home Assistant Core needs no token: the app knows it by its address in the app network. Every other client sends `Authorization: Bearer <token>` on everything but `health`, with the token from the `token` option; with the option empty, only Home Assistant gets in.
 
 | Endpoint | Does |
 |---|---|
@@ -51,11 +51,11 @@ Errors are `{"error": {"code": "…", "message": "…"}}`: `invalid_url`, `unsup
 
 ## Security in short
 
-The token is the only lock on the API, so keep it to the clients that need it; the random token per start never leaves the Supervisor. The API has no TLS: leave port 8099 unmapped unless a client outside Home Assistant needs it, and never expose it to the internet. Links to non-public addresses (your home network, Home Assistant, the Supervisor) are refused before yt-dlp runs. `allow_any_site` lets yt-dlp's generic extractor try any public site; it is off by default. The app does not check whether you are allowed to copy what you fetch; the site's terms and the owner's rights apply.
+Home Assistant Core is let in by its address, 172.30.32.1, the host's side of the app network, which it shares with everything else that runs in the host's network; everyone else needs the token from the options, and with none set nobody else gets in. The API has no TLS: leave port 8099 unmapped unless a client outside Home Assistant needs it, and never expose it to the internet. Links to non-public addresses (your home network, Home Assistant, the Supervisor) are refused before yt-dlp runs. `allow_any_site` lets yt-dlp's generic extractor try any public site; it is off by default. The app does not check whether you are allowed to copy what you fetch; the site's terms and the owner's rights apply.
 
 ## Development
 
-The service is a Python package in [`media_fetcher/rootfs/usr/lib/media_fetcher`](media_fetcher/rootfs/usr/lib/media_fetcher): `api.py` (aiohttp, the status page), `jobs.py` (threads, files, cleanup), `fetcher.py` (yt-dlp options and error mapping), `supervisor.py` (discovery). The tests replace `yt_dlp.YoutubeDL` with a fake and need no network:
+The service is a Python package in [`media_fetcher/rootfs/usr/lib/media_fetcher`](media_fetcher/rootfs/usr/lib/media_fetcher): `api.py` (aiohttp, the status page), `jobs.py` (threads, files, cleanup), `fetcher.py` (yt-dlp options and error mapping). The tests replace `yt_dlp.YoutubeDL` with a fake and need no network:
 
 ```bash
 pip install -r media_fetcher/requirements.txt pytest pytest-aiohttp pyyaml ruff

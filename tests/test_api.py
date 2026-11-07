@@ -14,7 +14,7 @@ URL = "https://www.youtube.com/watch?v=abc123"
 async def test_health_needs_no_token(client):
     resp = await client.get("/api/v1/health")
     assert resp.status == 200
-    assert await resp.json() == {"ok": True, "version": "0.1.0", "yt_dlp": "2026.10.26",
+    assert await resp.json() == {"ok": True, "version": "0.2.0", "yt_dlp": "2026.10.26",
                                  "js_runtime": "deno 2.9.8", "ffmpeg": "7.1.2"}
 
 
@@ -26,6 +26,39 @@ async def test_everything_else_needs_the_token(client, headers):
         resp = await client.request(method.upper(), path, headers=headers)
         assert resp.status == 401 and resp.headers["WWW-Authenticate"] == "Bearer"
         assert (await resp.json())["error"]["code"] == "unauthorized"
+
+
+async def test_home_assistant_core_needs_no_token(manager, aiohttp_client):
+    """The test client connects from 127.0.0.1; here that address is Home
+    Assistant Core's."""
+    core = await aiohttp_client(create_app(manager, TOKEN, {}, "0.2.0", core_peers=frozenset({"127.0.0.1"})))
+    for headers in ({}, {"Authorization": "Bearer wrong"}, bearer()):
+        resp = await core.get("/api/v1/jobs", headers=headers)
+        assert resp.status == 200 and await resp.json() == []
+        resp = await core.post("/api/v1/info", json={"url": URL}, headers=headers)
+        assert resp.status == 200 and (await resp.json())["id"] == "abc123"
+    # The address opens the API, not the page's own endpoints
+    resp = await core.post("/jobs", json={"url": URL, "kind": "audio"},
+                           headers={"Content-Type": "application/json", "X-Requested-With": "media-fetcher"})
+    assert resp.status == 403
+    resp = await core.get("/")
+    assert resp.status == 403
+
+
+@pytest.mark.parametrize("headers", [{}, {"Authorization": "Bearer "}, {"Authorization": "Bearer wrong"}, bearer()])
+async def test_without_a_token_only_home_assistant_gets_in(manager, aiohttp_client, headers):
+    closed = await aiohttp_client(create_app(manager, "", {}, "0.2.0", core_peers=frozenset({"172.30.32.1"})))
+    resp = await closed.get("/api/v1/jobs", headers=headers)
+    assert resp.status == 401 and resp.headers["WWW-Authenticate"] == "Bearer"
+    error = (await resp.json())["error"]
+    assert error["code"] == "unauthorized" and "Home Assistant" in error["message"]
+    assert (await closed.get("/api/v1/health")).status == 200
+    core = await aiohttp_client(create_app(manager, "", {}, "0.2.0", core_peers=frozenset({"127.0.0.1"}),
+                                           settings={"token_set": False}))
+    assert (await core.get("/api/v1/jobs", headers=headers)).status == 200
+    page = await (await aiohttp_client(create_app(manager, "", {}, "0.2.0", page_peers=frozenset({"127.0.0.1"}),
+                                                  settings={"token_set": False}))).get("/")
+    assert "Home Assistant only" in await page.text()
 
 
 async def test_unknown_routes_are_json(client):
@@ -69,7 +102,7 @@ async def test_bad_json(client):
 async def test_info_errors(aiohttp_client, tmp_path, scenario, code):
     manager = JobManager(Fetcher(False, scenario.ydl_class(), resolve=resolve), tmp_path / "jobs", 2, 3600)
     manager.start()
-    client = await aiohttp_client(create_app(manager, TOKEN, {}, "0.1.0"))
+    client = await aiohttp_client(create_app(manager, TOKEN, {}, "0.2.0"))
     resp = await client.post("/api/v1/info", json={"url": "https://x.test/a"}, headers=bearer())
     assert resp.status == 422
     error = (await resp.json())["error"]
@@ -126,7 +159,7 @@ async def test_not_ready_and_busy(aiohttp_client, tmp_path):
     scenario = Scenario(gate=gate)
     manager = JobManager(Fetcher(False, scenario.ydl_class(), resolve=resolve), tmp_path / "jobs", 1, 3600)
     manager.start()
-    client = await aiohttp_client(create_app(manager, TOKEN, {}, "0.1.0"))
+    client = await aiohttp_client(create_app(manager, TOKEN, {}, "0.2.0"))
     resp = await client.post("/api/v1/jobs", json={"url": URL, "kind": "audio"}, headers=bearer())
     job_id = (await resp.json())["id"]
     wait_for(manager, job_id, "downloading")
@@ -150,7 +183,7 @@ async def test_status_page_for_the_ingress_peer_only(client, manager, aiohttp_cl
     page = await resp.text()
     assert "A talk" in page and job_id in page and "deno 2.9.8" in page and "done" in page
     assert TOKEN not in page and "/config/app/local_media_fetcher/config" in page
-    other = await aiohttp_client(create_app(manager, TOKEN, {}, "0.1.0", peers=frozenset({"172.30.32.2"})))
+    other = await aiohttp_client(create_app(manager, TOKEN, {}, "0.2.0", page_peers=frozenset({"172.30.32.2"})))
     resp = await other.get("/")
     assert resp.status == 403
     resp = await other.get("/api/v1/health")
@@ -159,7 +192,7 @@ async def test_status_page_for_the_ingress_peer_only(client, manager, aiohttp_cl
 
 async def test_status_page_without_jobs(client):
     page = await (await client.get("/")).text()
-    assert "No jobs." in page and "random" not in page and "from the options" in page
+    assert "No jobs." in page and "from the options" in page and "Home Assistant only" not in page
 
 
 async def test_private_addresses_are_refused_before_a_job_starts(client, scenario):
@@ -232,7 +265,7 @@ async def test_the_pages_endpoints_need_the_ingress_peer_and_the_header(client, 
     resp = await client.delete("/jobs/x")
     assert resp.status == 400
     assert manager.snapshots() == []
-    other = await aiohttp_client(create_app(manager, TOKEN, {}, "0.1.0", peers=frozenset({"172.30.32.2"})))
+    other = await aiohttp_client(create_app(manager, TOKEN, {}, "0.2.0", page_peers=frozenset({"172.30.32.2"})))
     headers = {"Content-Type": "application/json", "X-Requested-With": "media-fetcher"}
     for method, path in (("POST", "/jobs"), ("DELETE", "/jobs/x"), ("GET", "/jobs/x/file")):
         resp = await other.request(method, path, json={"url": URL, "kind": "audio"}, headers=headers)
@@ -245,7 +278,7 @@ async def test_page_rows_show_failures_and_cancel_buttons(aiohttp_client, tmp_pa
     scenario = Scenario(gate=gate)
     manager = JobManager(Fetcher(False, scenario.ydl_class(), resolve=resolve), tmp_path / "jobs", 2, 3600)
     manager.start()
-    client = await aiohttp_client(create_app(manager, TOKEN, {}, "0.1.0", peers=frozenset({"127.0.0.1"})))
+    client = await aiohttp_client(create_app(manager, TOKEN, {}, "0.2.0", page_peers=frozenset({"127.0.0.1"})))
     resp = await client.post("/api/v1/jobs", json={"url": URL, "kind": "audio", "max_duration": 1}, headers=bearer())
     failed = (await resp.json())["id"]
     wait_for(manager, failed, "failed")

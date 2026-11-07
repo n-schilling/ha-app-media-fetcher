@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import secrets
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -17,8 +16,7 @@ class ConfigError(Exception):
 
 @dataclass(frozen=True)
 class Config:
-    token: str               # the API token: set in the options or random per start
-    token_fixed: bool        # True when it comes from the options
+    token: str               # the API token for clients other than Home Assistant Core; "" when none
     max_jobs: int            # jobs that run at the same time
     keep_minutes: int        # minutes a finished job and its file stay
     allow_any_site: bool     # also yt-dlp's generic extractor
@@ -39,16 +37,11 @@ def load(path: Path = OPTIONS) -> Config:
         raise ConfigError(f"{path} not readable: {err}") from err
     if not isinstance(opts, dict):
         raise ConfigError(f"{path} holds no options")
-    token = str(opts.get("token") or "").strip()
-    fixed = bool(token)
-    if not fixed:
-        token = secrets.token_urlsafe(32)
     level = str(opts.get("log_level") or "info").upper()
     if level not in LEVELS:
         raise ConfigError("log_level must be debug, info, warning or error")
     return Config(
-        token=token,
-        token_fixed=fixed,
+        token=str(opts.get("token") or "").strip(),
         max_jobs=_int(opts, "max_jobs", 2, 1, 8),
         keep_minutes=_int(opts, "keep_minutes", 60, 1, 1440),
         allow_any_site=bool(opts.get("allow_any_site", False)),
