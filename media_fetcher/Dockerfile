@@ -30,6 +30,9 @@ ENV PATH=/opt/venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/
 ENV APP_VERSION=${BUILD_VERSION}
 # s6-overlay: warnings and errors only, no per-service start/stop info lines
 ENV S6_VERBOSITY=1
+# The Supervisor restarts the app when the service stops answering
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD /opt/venv/bin/python3 -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8099/api/v1/health', timeout=5)" || exit 1
 LABEL \
     io.hass.name="${BUILD_NAME}" \
     io.hass.description="${BUILD_DESCRIPTION}" \
