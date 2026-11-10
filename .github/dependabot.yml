@@ -14,3 +14,7 @@ updates:
     groups:
       python:
         patterns: ["*"]
+  - package-ecosystem: docker
+    directory: /media_fetcher
+    schedule:
+      interval: weekly

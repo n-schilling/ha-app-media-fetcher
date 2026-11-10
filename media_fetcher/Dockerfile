@@ -1,6 +1,6 @@
-ARG BUILD_FROM=ghcr.io/home-assistant/base-debian:trixie
-# hadolint ignore=DL3006
-FROM ${BUILD_FROM}
+# Home Assistant's Debian base of the 2026.11 release, pinned by digest;
+# Dependabot proposes newer ones
+FROM ghcr.io/home-assistant/base-debian:trixie-2026.11.0@sha256:d996c8f8ef0096a1ac3756766149b31b8171afc663068cc192f2bcab20f1b8c9
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
@@ -15,9 +15,11 @@ RUN \
         ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
+# requirements.txt pins every package with its hashes (uv pip compile from
+# requirements.in), so a build installs exactly the files reviewed
 COPY requirements.txt /tmp/
 RUN python3 -m venv /opt/venv \
-    && /opt/venv/bin/pip install --no-cache-dir --only-binary=:all: -r /tmp/requirements.txt \
+    && /opt/venv/bin/pip install --no-cache-dir --only-binary=:all: --require-hashes -r /tmp/requirements.txt \
     && rm /tmp/requirements.txt
 
 COPY rootfs /

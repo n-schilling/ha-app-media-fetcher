@@ -22,4 +22,23 @@ profile media_fetcher flags=(attach_disconnected,mediate_deleted) {
   file,
   deny /proc/sys/** w,
   deny /sys/** w,
+
+  # ffmpeg and ffprobe convert files that are already downloaded, and Deno
+  # solves the JavaScript a site hands to yt-dlp: none of them needs the
+  # network. Without it, a download that names other addresses (a manifest
+  # disguised as media) leads nowhere, whatever ffmpeg makes of it.
+  /usr/bin/ffmpeg Cx -> offline,
+  /usr/bin/ffprobe Cx -> offline,
+  /opt/venv/bin/deno Cx -> offline,
+
+  profile offline flags=(attach_disconnected,mediate_deleted) {
+    #include <abstractions/base>
+
+    network unix,
+    signal (send, receive),
+
+    file,
+    deny /proc/sys/** w,
+    deny /sys/** w,
+  }
 }
