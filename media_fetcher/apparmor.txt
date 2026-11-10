@@ -35,6 +35,8 @@ profile media_fetcher flags=(attach_disconnected,mediate_deleted) {
     #include <abstractions/base>
 
     network unix,
+    deny network inet,
+    deny network inet6,
     signal (send, receive),
 
     file,

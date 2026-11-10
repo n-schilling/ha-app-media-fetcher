@@ -119,4 +119,4 @@ jobs:
         if: matrix.arch == 'amd64'
         run: |
           sudo apparmor_parser -r -W media_fetcher/apparmor.txt
-          tests/apparmor.sh media-fetcher:test
+          tests/apparmor.sh media-fetcher:test || { sudo dmesg | grep -i apparmor | tail -n 20; exit 1; }

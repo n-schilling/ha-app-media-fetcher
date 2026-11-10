@@ -61,9 +61,15 @@ kill $! 2> /dev/null || true
 [[ "${child}" == "media_fetcher//offline (enforce)" ]] || fail "ffmpeg runs as ${child}"
 echo "ok: ffmpeg runs as ${child}"
 
-if out=$(ffprobe -v error http://127.0.0.1:8000/a.m4a 2>&1); then
+ffprobe -v error -show_entries format=duration http://127.0.0.1:8000/a.m4a > /tmp/probe.log 2>&1 &
+probe=$!
+sleep 0.2
+echo "ffprobe runs as $(profile ${probe} 2> /dev/null || echo gone)"
+if wait "${probe}"; then
+    cat /tmp/probe.log
     fail "ffprobe reached the network"
 fi
+out=$(cat /tmp/probe.log)
 echo "ok: ffprobe reaches no address (${out})"
 if out=$(ffmpeg -v error -y -i http://127.0.0.1:8000/a.m4a /tmp/b.m4a 2>&1); then
     fail "ffmpeg reached the network"
