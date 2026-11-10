@@ -24,7 +24,8 @@ from media_fetcher import api  # noqa: E402
 from playwright.sync_api import sync_playwright  # noqa: E402
 
 VERSIONS = {"yt_dlp": "2026.10.26", "js_runtime": "deno 2.9.8", "ffmpeg": "7.1.5-0"}
-SETTINGS = {"max_jobs": 2, "keep_minutes": 60, "max_size_mb": 2000, "allow_any_site": False, "token_set": False}
+SETTINGS = {"max_jobs": 2, "keep_minutes": 60, "max_size_mb": 2000, "allow_any_site": False, "token_set": False,
+            "trust_home_assistant": True}
 
 
 def version() -> str:

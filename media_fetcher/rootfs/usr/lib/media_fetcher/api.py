@@ -2,8 +2,9 @@
 
 Every endpoint but health and the OpenAPI definition needs "Authorization:
 Bearer <token>", unless the request comes from Home Assistant Core, which the
-app knows by its address in the app network; without a token in the options
-nobody else gets in. Errors are JSON: {"error": {"code": "...", "message": "..."}}.
+app knows by its address in the app network, and the option
+trust_home_assistant is on; without a token in the options nobody else gets
+in. Errors are JSON: {"error": {"code": "...", "message": "..."}}.
 
 The page at / is HTML for Home Assistant's ingress and answers only the
 ingress proxy, so only administrators see it. It shows versions, settings
@@ -68,7 +69,7 @@ class Context:
     versions: dict                       # yt_dlp, js_runtime, ffmpeg
     version: str                         # the app's
     page_peers: frozenset[str]           # who may see the status page: the ingress proxy
-    core_peers: frozenset[str]           # who needs no token: Home Assistant Core
+    core_peers: frozenset[str]           # who needs no token: Home Assistant Core, or nobody
     slug: str | None = None              # for the link to the app's settings
     settings: dict = field(default_factory=dict)
     probes: int = 0                      # info requests running now; at most max_jobs
@@ -111,7 +112,8 @@ async def auth(request: web.Request, handler) -> web.StreamResponse:
         ctx: Context = request.app["ctx"]
         if request.remote not in ctx.core_peers and not bearer_ok(request, ctx.token):
             message = ("a valid bearer token is required" if ctx.token
-                       else "no token is set: only Home Assistant may call the API")
+                       else "no token is set: only Home Assistant may call the API" if ctx.core_peers
+                       else "no token is set and Home Assistant is not trusted: nobody may call the API")
             return error(401, "unauthorized", message, **{"WWW-Authenticate": "Bearer"})
     return await handler(request)
 
@@ -498,8 +500,10 @@ def render(ctx: Context, jobs: list[dict], base: str = "", nonce: str = "") -> s
     ])
     s = ctx.settings
     settings = _kv([
-        ("API token", "from the options, for clients other than Home Assistant" if s.get("token_set")
-         else "none: Home Assistant only"),
+        ("API token", ("from the options, for clients other than Home Assistant" if s.get("trust_home_assistant", True)
+                       else "from the options, for every client") if s.get("token_set")
+         else "none: Home Assistant only" if s.get("trust_home_assistant", True) else "none: nobody gets in"),
+        ("Trust Home Assistant", "yes" if s.get("trust_home_assistant", True) else "no"),
         ("Concurrent jobs", esc(str(s.get("max_jobs", "–")))),
         ("Keep finished jobs", f"{esc(str(s.get('keep_minutes', '–')))} min"),
         ("Largest file", f"{esc(str(s.get('max_size_mb', '–')))} MB"),

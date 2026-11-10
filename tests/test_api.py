@@ -61,6 +61,30 @@ async def test_without_a_token_only_home_assistant_gets_in(manager, aiohttp_clie
     assert "Home Assistant only" in await page.text()
 
 
+@pytest.mark.parametrize("headers", [{}, {"Authorization": "Bearer wrong"}])
+async def test_an_untrusted_home_assistant_needs_the_token(manager, aiohttp_client, headers):
+    """trust_home_assistant off: no address passes without the token."""
+    untrusted = await aiohttp_client(create_app(manager, TOKEN, {}, "0.3.0", core_peers=frozenset(),
+                                                page_peers=frozenset({"127.0.0.1"}),
+                                                settings={"token_set": True, "trust_home_assistant": False}))
+    resp = await untrusted.get("/api/v1/jobs", headers=headers)
+    assert resp.status == 401 and (await resp.json())["error"]["message"] == "a valid bearer token is required"
+    assert (await untrusted.get("/api/v1/jobs", headers=bearer())).status == 200
+    text = await (await untrusted.get("/")).text()
+    assert "for every client" in text and "Trust Home Assistant" in text
+
+
+async def test_untrusted_and_without_a_token_nobody_gets_in(manager, aiohttp_client):
+    closed = await aiohttp_client(create_app(manager, "", {}, "0.3.0", core_peers=frozenset(),
+                                             page_peers=frozenset({"127.0.0.1"}),
+                                             settings={"token_set": False, "trust_home_assistant": False}))
+    for headers in ({}, bearer()):
+        resp = await closed.get("/api/v1/jobs", headers=headers)
+        assert resp.status == 401 and "nobody" in (await resp.json())["error"]["message"]
+    assert (await closed.get("/api/v1/health")).status == 200
+    assert "none: nobody gets in" in await (await closed.get("/")).text()
+
+
 async def test_unknown_routes_are_json(client):
     resp = await client.get("/api/v1/nothing", headers=bearer())
     assert resp.status == 404 and (await resp.json())["error"]["code"] == "not_found"

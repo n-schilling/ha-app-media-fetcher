@@ -21,7 +21,7 @@ The page looks like Home Assistant's own settings and follows the theme in use. 
 
 ```mermaid
 flowchart LR
-    core["Home Assistant Core<br/>integrations, automations"] -- "HTTP API, no token" --> api
+    core["Home Assistant Core<br/>integrations, automations"] -- "HTTP API, no token<br/>while trusted" --> api
     clients["Other apps, programs<br/>in your network"] -- "HTTP API with token" --> api
     admin(["Administrator"]) -- "page, through ingress" --> page
     subgraph app["Media Fetcher"]
@@ -54,7 +54,7 @@ A client asks what a link holds (`info`) or starts a job; yt-dlp fetches the med
 
 ## Development
 
-The service is a Python package in [`media_fetcher/rootfs/usr/lib/media_fetcher`](media_fetcher/rootfs/usr/lib/media_fetcher): `api.py` (aiohttp, the page), `jobs.py` (threads, files, cleanup), `fetcher.py` (yt-dlp options, limits and error mapping). The tests replace `yt_dlp.YoutubeDL` with a fake and need no network. Set up both Pythons the CI tests with (3.13 is the image's) and run every check:
+The service is a Python package in [`media_fetcher/rootfs/usr/lib/media_fetcher`](media_fetcher/rootfs/usr/lib/media_fetcher): `api.py` (aiohttp, the page), `jobs.py` (threads, files, cleanup), `fetcher.py` (yt-dlp options, limits and error mapping). The page's look comes from the stylesheet shared by these apps, [`ha.css`](media_fetcher/rootfs/usr/local/share/ha-app/ha.css), which stays identical in every app. The tests replace `yt_dlp.YoutubeDL` with a fake and need no network. Set up both Pythons the CI tests with (3.13 is the image's) and run every check:
 
 ```bash
 uv venv -p 3.13 .venv && uv pip install -p .venv --require-hashes -r media_fetcher/requirements.txt && uv pip install -p .venv -r requirements_test.txt
@@ -80,11 +80,11 @@ A local image for a real run, with a fixed token:
 
 ```bash
 docker build --build-arg BUILD_VERSION=dev -t media-fetcher:dev media_fetcher
-mkdir -p /tmp/mf && echo '{"token": "dev-token", "max_jobs": 2, "keep_minutes": 60, "max_size_mb": 2000, "allow_any_site": false, "log_level": "debug"}' > /tmp/mf/options.json
+mkdir -p /tmp/mf && echo '{"token": "dev-token", "trust_home_assistant": true, "max_jobs": 2, "keep_minutes": 60, "max_size_mb": 2000, "allow_any_site": false, "log_level": "debug"}' > /tmp/mf/options.json
 docker run --rm -p 8099:8099 -v /tmp/mf:/data media-fetcher:dev
 ```
 
-Releases: work happens on `dev`; when CI is green there, `dev` goes to `main`, and a green CI run on `main` tags the version from `config.yaml` and publishes a release with its changelog section.
+Releases: work happens on `dev`, raise `version` in `media_fetcher/config.yaml` and add its section to the changelog; when CI is green there, `dev` goes to `main`, and a green CI run on `main` tags the version from `config.yaml` and publishes a release with its changelog section.
 
 ## Support
 

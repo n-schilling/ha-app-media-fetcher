@@ -16,7 +16,8 @@ class ConfigError(Exception):
 
 @dataclass(frozen=True)
 class Config:
-    token: str               # the API token for clients other than Home Assistant Core; "" when none
+    token: str               # the API token; "" when none
+    trust_home_assistant: bool  # Home Assistant Core gets in without the token
     max_jobs: int            # jobs that run at the same time
     keep_minutes: int        # minutes a finished job and its file stay
     max_size_mb: int         # megabytes (10^6 bytes) a job's file may have
@@ -43,6 +44,7 @@ def load(path: Path = OPTIONS) -> Config:
         raise ConfigError("log_level must be debug, info, warning or error")
     return Config(
         token=str(opts.get("token") or "").strip(),
+        trust_home_assistant=bool(opts.get("trust_home_assistant", True)),
         max_jobs=_int(opts, "max_jobs", 2, 1, 8),
         keep_minutes=_int(opts, "keep_minutes", 60, 1, 1440),
         max_size_mb=_int(opts, "max_size_mb", 2000, 1, 100000),

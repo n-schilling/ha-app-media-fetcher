@@ -9,8 +9,9 @@ info:
     video (mp4, mkv or the source's own container) with yt-dlp, Deno as its JavaScript runtime
     and ffmpeg for conversions, and serves the file for a while.
 
-    Home Assistant Core needs no token: the service knows it by its address in the app network
-    (172.30.32.1, the host's side of it). Every other client sends `Authorization: Bearer <token>`
+    Home Assistant Core needs no token while the option `trust_home_assistant` is on (the
+    default): the service knows it by its address in the app network (172.30.32.1, the host's
+    side of it). With the option off Core sends the token too. Every other client sends `Authorization: Bearer <token>`
     with the token from the app's `token` option on every request but `health` and this
     definition; with the option empty, only Home Assistant gets in. Errors are
     `{"error": {"code": "...", "message": "..."}}`; yt-dlp's messages are shortened to their first
@@ -269,7 +270,7 @@ components:
     bearer:
       type: http
       scheme: bearer
-      description: The app's API token from the `token` option; not needed by Home Assistant Core
+      description: The app's API token from the `token` option; not needed by Home Assistant Core while `trust_home_assistant` is on
   parameters:
     JobId:
       name: id
@@ -287,7 +288,7 @@ components:
           schema:
             $ref: "#/components/schemas/Error"
     Unauthorized:
-      description: No valid bearer token, and not Home Assistant Core (`unauthorized`)
+      description: No valid bearer token, and not a trusted Home Assistant Core (`unauthorized`)
       headers:
         WWW-Authenticate:
           schema:

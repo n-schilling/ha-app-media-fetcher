@@ -1,7 +1,10 @@
 configuration:
   token:
     name: API-Token
-    description: Optional. Home Assistant braucht kein Token. Setze eines für andere Clients, etwa andere Apps oder, bei gemapptem Port, Programme im eigenen Netz; leer antwortet die API nur Home Assistant.
+    description: Optional. Home Assistant braucht kein Token, solange „Home Assistant vertrauen“ an ist. Setze eines für andere Clients, etwa andere Apps oder, bei gemapptem Port, Programme im eigenen Netz; leer antwortet die API nur Home Assistant.
+  trust_home_assistant:
+    name: Home Assistant vertrauen
+    description: Anfragen von der Adresse von Home Assistant im App-Netz (172.30.32.1) brauchen kein Token. Diese Adresse nutzen auch Apps im Host-Netz. Aus braucht auch Home Assistant das Token wie jeder andere Client.
   max_jobs:
     name: Gleichzeitige Aufträge
     description: Wie viele Aufträge gleichzeitig laufen; weitere Anfragen bekommen „busy“, bis einer fertig ist.

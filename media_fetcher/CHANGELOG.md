@@ -6,6 +6,7 @@ All notable changes to this app are documented here. The format follows [Keep a 
 
 ### Added
 
+- Option `trust_home_assistant` (default on): off, Home Assistant Core needs the token like every other client, and nobody gets into the API without a token
 - Option `max_size_mb` (default 2000): a job fails with `too_large` when the site announces a larger file, the download grows past it, or a conversion would make the file larger (ffmpeg stops writing at the limit)
 - No job starts, and running ones stop, while less than 1 GiB is free on Home Assistant's data partition: `507 insufficient_storage` when starting, `insufficient_storage` as a job's error
 - The web page shows the app's version at the bottom and follows Home Assistant's look with the stylesheet all apps of this author share; on a phone each job is one block

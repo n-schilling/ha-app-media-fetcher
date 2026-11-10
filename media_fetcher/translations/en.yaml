@@ -1,7 +1,10 @@
 configuration:
   token:
     name: API token
-    description: Optional. Home Assistant needs no token. Set one for other clients, such as other apps or, with the port mapped, programs in your network; empty, the API answers Home Assistant alone.
+    description: Optional. Home Assistant needs no token while "Trust Home Assistant" is on. Set one for other clients, such as other apps or, with the port mapped, programs in your network; empty, the API answers Home Assistant alone.
+  trust_home_assistant:
+    name: Trust Home Assistant
+    description: Requests from Home Assistant's address in the app network (172.30.32.1) need no token. That address is also used by apps in the host network. Off, Home Assistant needs the token like every other client.
   max_jobs:
     name: Concurrent jobs
     description: How many fetch jobs run at the same time; further requests get "busy" until one finishes.

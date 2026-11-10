@@ -16,7 +16,8 @@ Under **Settings → Apps → Media Fetcher → Configuration**.
 
 | Option | Default | Meaning |
 |---|---|---|
-| `token` | | API token for clients other than Home Assistant Core. Empty: there is none, and the API answers Home Assistant alone. Set: other apps and, with the port mapped, programs in your network send it |
+| `token` | | API token. Empty: there is none, and the API answers Home Assistant alone (or nobody, with `trust_home_assistant` off). Set: other apps and, with the port mapped, programs in your network send it |
+| `trust_home_assistant` | `true` | Requests from Home Assistant Core's address in the app network need no token. Off: Core sends the token like every other client |
 | `max_jobs` | `2` | Jobs that run at the same time, and links `info` looks at at the same time; further requests get `429 busy` until one finishes |
 | `keep_minutes` | `60` | Minutes a finished job and its file stay available; then they are deleted. Everything is deleted when the app starts |
 | `max_size_mb` | `2000` | Megabytes (millions of bytes) a fetched file may have. A larger one fails with `too_large`: before the download when the site tells the size, during it when it grows past the limit, after a conversion that would make it larger |
@@ -40,8 +41,8 @@ Base: `http://<host>:8099/api/v1`, JSON in and out. The host is the app's name i
 
 ### Who gets in
 
-- **Home Assistant Core needs no token.** Core runs in the host's network, so its requests enter the app network from the network's address on the host, 172.30.32.1. Requests from that address pass without a token. The app looks at the connection's own address only, never at a forwarded header. The same address belongs to everything else that runs in the host's network: apps with `host_network`, the operating system itself and, with the port mapped, connections Docker's proxy hands on from the host. Know which apps run in the host's network.
-- **Everyone else needs the token.** Other apps, and clients in your network when the port is mapped, send `Authorization: Bearer <token>` on every request but `health` and `openapi.yaml`, with the token from the `token` option. With the option empty (the default) there is no token, and the API answers Home Assistant Core alone. A set token stays the same across restarts; treat it like a password, it never appears in the log.
+- **Home Assistant Core needs no token** while `trust_home_assistant` is on (the default). Core runs in the host's network, so its requests enter the app network from the network's address on the host, 172.30.32.1. Requests from that address pass without a token. The app looks at the connection's own address only, never at a forwarded header. The same address belongs to everything else that runs in the host's network: apps with `host_network`, the operating system itself and, with the port mapped, connections Docker's proxy hands on from the host. Know which apps run in the host's network; if one of them should not use the API, turn `trust_home_assistant` off, set a token and give it to Core as well (see the examples).
+- **Everyone else needs the token.** Other apps, and clients in your network when the port is mapped, send `Authorization: Bearer <token>` on every request but `health` and `openapi.yaml`, with the token from the `token` option. With the option empty (the default) there is no token, and the API answers Home Assistant Core alone, or nobody with `trust_home_assistant` off. A set token stays the same across restarts; treat it like a password, it never appears in the log.
 - **Outside the app network.** The API is not reachable from your network unless you map the port under **Network** on the app's page. Do that only with a token set and a network you trust: the token crosses it in clear text, there is no TLS and no rate limit. Never expose the port to the internet.
 
 Whoever gets in can make the app fetch from the internet and read the files of every job.
@@ -60,7 +61,7 @@ Whoever gets in can make the app fetch from the internet and read the files of e
 {"error": {"code": "not_available", "message": "Video unavailable. This video is not available"}}
 ```
 
-yt-dlp's message is shortened to its first line, at most 200 characters, without the `ERROR: [site] id:` prefix. Every endpoint but `health` and `openapi.yaml` answers `401 unauthorized` to a request that neither comes from Home Assistant Core nor carries the token.
+yt-dlp's message is shortened to its first line, at most 200 characters, without the `ERROR: [site] id:` prefix. Every endpoint but `health` and `openapi.yaml` answers `401 unauthorized` to a request that neither comes from a trusted Home Assistant Core nor carries the token.
 
 ### `GET /health`
 
@@ -241,12 +242,21 @@ mode: queued
 
 The script waits at most two minutes, which suits audio of ordinary length; the job keeps running in the app regardless and stays on its page.
 
+With `trust_home_assistant` off, Core sends the token as well: give both rest commands a header, with the token in `secrets.yaml`. The `downloader` action cannot send a header, so it can then not fetch the file; a `rest_command` reaches the job's state, and an integration of your own can download the file with the token.
+
+```yaml
+# configuration.yaml, for each rest command
+    headers:
+      Authorization: !secret media_fetcher_bearer   # secrets.yaml: media_fetcher_bearer: "Bearer <token>"
+```
+
 ## Troubleshooting
 
 - **A site fails with `not_available` or `extract_failed`:** set `log_level` to `debug` and fetch again; the log then holds every message of yt-dlp. Sites change often, and yt-dlp follows; check for an update of the app first.
 - **The log warns about no JavaScript runtime or no ffmpeg:** the image is incomplete; rebuild it with **Rebuild** on the app's page.
 - **`507 insufficient_storage` or `too_large`:** free space on Home Assistant's data partition (old backups, the recorder database) or raise `max_size_mb`; finished files leave after `keep_minutes`, or at once with `DELETE`.
 - **`401 unauthorized` from another app:** set a `token` and send it as `Authorization: Bearer <token>`.
+- **`401 unauthorized` from Home Assistant:** `trust_home_assistant` is off; send the token, or turn the option back on.
 - **`429 busy`:** as many jobs or `info` requests as `max_jobs` are running; try again later or raise `max_jobs`.
 
 ## Known limitations

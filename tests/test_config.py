@@ -17,7 +17,7 @@ def test_defaults_without_a_token(tmp_path):
     cfg = load(write(tmp_path))
     assert (cfg.max_jobs, cfg.keep_minutes, cfg.allow_any_site, cfg.log_level) == (2, 60, False, "INFO")
     assert cfg.max_size_mb == 2000
-    assert cfg.token == ""
+    assert cfg.token == "" and cfg.trust_home_assistant is True
     assert load(write(tmp_path, token="  ")).token == ""
 
 
@@ -25,6 +25,11 @@ def test_a_set_token_is_kept(tmp_path):
     cfg = load(write(tmp_path, token=" my-token ", max_jobs=4, keep_minutes=5, allow_any_site=True, log_level="debug"))
     assert cfg.token == "my-token"
     assert (cfg.max_jobs, cfg.keep_minutes, cfg.allow_any_site, cfg.log_level) == (4, 5, True, "DEBUG")
+
+
+def test_home_assistant_can_lose_its_trust(tmp_path):
+    assert load(write(tmp_path, trust_home_assistant=False)).trust_home_assistant is False
+    assert load(write(tmp_path, trust_home_assistant=True)).trust_home_assistant is True
 
 
 @pytest.mark.parametrize("bad", [{"max_jobs": 0}, {"max_jobs": "2"}, {"max_jobs": True}, {"keep_minutes": 0},
@@ -50,4 +55,4 @@ def test_the_config_defaults_match_the_code(tmp_path):
     cfg = load(write(tmp_path, **config["options"]))
     assert cfg == load(write(tmp_path))
     assert set(config["options"]) == set(config["schema"]) == {
-        "token", "max_jobs", "keep_minutes", "max_size_mb", "allow_any_site", "log_level"}
+        "token", "trust_home_assistant", "max_jobs", "keep_minutes", "max_size_mb", "allow_any_site", "log_level"}

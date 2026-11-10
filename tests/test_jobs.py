@@ -1,6 +1,7 @@
 """The job manager: threads, states, files, cancelling, cleanup."""
 
 import threading
+import time
 
 import pytest
 from conftest import Scenario, resolve, wait_for
@@ -39,6 +40,10 @@ def test_a_failed_download_keeps_no_files(tmp_path, clock):
     failed = wait_for(manager, job.id, "failed")
     assert failed["error"] == {"code": "download_failed",
                                "message": "unable to download video data: HTTP Error 403: Forbidden"}
+    # The state turns "failed" just before the job's thread removes its folder
+    deadline = time.monotonic() + 2
+    while (tmp_path / "jobs" / job.id).exists() and time.monotonic() < deadline:
+        time.sleep(0.01)
     assert not (tmp_path / "jobs" / job.id).exists()
     manager.shutdown()
 

@@ -14,7 +14,7 @@ from pathlib import Path
 from aiohttp import web
 
 from . import config as cfg_module
-from .api import PORT, create_app
+from .api import CORE_PEER, PORT, create_app
 from .fetcher import MB, Fetcher, versions
 from .jobs import JobManager
 
@@ -41,17 +41,32 @@ async def expire_loop(manager: JobManager) -> None:
             LOGGER.exception("Expiring jobs failed")
 
 
+def trusted_peers(cfg: cfg_module.Config) -> frozenset[str]:
+    """The addresses that need no token: Home Assistant Core's, unless the
+    option trust_home_assistant is off."""
+    return frozenset({CORE_PEER}) if cfg.trust_home_assistant else frozenset()
+
+
+def access_line(cfg: cfg_module.Config) -> str:
+    """Who gets into the API, for the log at the start."""
+    if cfg.trust_home_assistant:
+        return ("Home Assistant needs no token, other clients take the token from the options" if cfg.token
+                else "Home Assistant needs no token, other clients are not let in (no token set)")
+    return ("every client, Home Assistant included, takes the token from the options" if cfg.token
+            else "nobody is let in: Home Assistant is not trusted and no token is set")
+
+
 async def serve(cfg: cfg_module.Config, manager: JobManager, found: dict, version: str) -> None:
     host = hostname()
     app = create_app(manager, cfg.token, found, version, slug=host.replace("-", "_"),
-                     settings={"max_jobs": cfg.max_jobs, "keep_minutes": cfg.keep_minutes,
+                     core_peers=trusted_peers(cfg),
+                     settings={"trust_home_assistant": cfg.trust_home_assistant, "max_jobs": cfg.max_jobs, "keep_minutes": cfg.keep_minutes,
                                "max_size_mb": cfg.max_size_mb, "allow_any_site": cfg.allow_any_site,
                                "token_set": bool(cfg.token)})
     runner = web.AppRunner(app, access_log=None)
     await runner.setup()
     await web.TCPSite(runner, "0.0.0.0", PORT).start()
-    LOGGER.info("API on port %d: Home Assistant needs no token, other clients %s", PORT,
-                "take the token from the options" if cfg.token else "are not let in (no token set)")
+    LOGGER.info("API on port %d: %s", PORT, access_line(cfg))
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGTERM, signal.SIGINT):

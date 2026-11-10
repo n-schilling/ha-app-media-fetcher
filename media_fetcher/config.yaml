@@ -20,6 +20,7 @@ backup_exclude:
   - jobs/**
 options:
   token: ""
+  trust_home_assistant: true
   max_jobs: 2
   keep_minutes: 60
   max_size_mb: 2000
@@ -27,6 +28,7 @@ options:
   log_level: info
 schema:
   token: password?
+  trust_home_assistant: bool
   max_jobs: int(1,8)
   keep_minutes: int(1,1440)
   max_size_mb: int(1,100000)
