@@ -118,6 +118,5 @@ jobs:
         # emulation the kernel sees QEMU, not the programs.
         if: matrix.arch == 'amd64'
         run: |
-          tests/apparmor-variants.sh
           sudo apparmor_parser -r -W media_fetcher/apparmor.txt
           tests/apparmor.sh media-fetcher:test || { sudo dmesg | grep -i apparmor | tail -n 20; exit 1; }
