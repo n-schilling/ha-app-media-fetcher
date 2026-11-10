@@ -8,6 +8,9 @@ configuration:
   keep_minutes:
     name: Keep finished jobs
     description: Minutes a finished job and its file stay available before they are deleted.
+  max_size_mb:
+    name: Largest file
+    description: Megabytes a fetched file may have; a larger one fails with "too_large". Jobs also stop while less than 1 GiB is free on Home Assistant's data partition.
   allow_any_site:
     name: Allow any site
     description: Also use yt-dlp's generic extractor, which tries to fetch media from any public site. Off, only sites yt-dlp has an extractor for are fetched. Links to addresses in your own network are refused either way.

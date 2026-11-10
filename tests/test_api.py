@@ -127,7 +127,7 @@ async def test_a_job_from_start_to_file_to_delete(client, manager):
     assert resp.status == 200
     assert resp.headers["Content-Type"] == "audio/mp4" and resp.headers["Content-Length"] == "1000"
     assert resp.headers["Content-Disposition"] == f'attachment; filename="{job_id}.m4a"'
-    assert await resp.read() == b"x" * 1000
+    assert await resp.read() == Scenario().content
     resp = await client.delete(f"/api/v1/jobs/{job_id}", headers=bearer())
     assert resp.status == 204
     for path in (f"/api/v1/jobs/{job_id}", f"/api/v1/jobs/{job_id}/file"):
@@ -252,7 +252,7 @@ async def test_the_page_starts_jobs_and_serves_downloads(client, manager):
     resp = await client.get(f"/jobs/{job_id}/file")
     assert resp.status == 200 and resp.headers["Content-Type"] == "audio/mp4"
     assert resp.headers["Content-Disposition"] == 'attachment; filename="A talk.m4a"'
-    assert await resp.read() == b"x" * 1000
+    assert await resp.read() == Scenario().content
     resp = await client.delete(f"/jobs/{job_id}", headers=headers)
     assert resp.status == 204
     resp = await client.get(f"/jobs/{job_id}/file")
@@ -291,3 +291,105 @@ async def test_page_rows_show_failures_and_cancel_buttons(aiohttp_client, tmp_pa
     gate.set()
     wait_for(manager, running, "done")
     manager.shutdown()
+
+
+# --- limits and headers ----------------------------------------------------------------------------
+async def test_info_refuses_more_probes_than_max_jobs(aiohttp_client, tmp_path):
+    """Probes beyond max_jobs get busy at once; a job still starts meanwhile."""
+    release = threading.Event()
+    entered = threading.Semaphore(0)
+
+    class SlowFetcher(Fetcher):
+        def info(self, url):
+            entered.release()
+            release.wait(5)
+            return super().info(url)
+
+    scenario = Scenario()
+    manager = JobManager(SlowFetcher(False, scenario.ydl_class(), resolve=resolve), tmp_path / "jobs", 2, 3600)
+    manager.start()
+    client = await aiohttp_client(create_app(manager, TOKEN, {}, "0.3.0"))
+    import asyncio
+    probes = [asyncio.create_task(client.post("/api/v1/info", json={"url": URL}, headers=bearer())) for _ in range(2)]
+    for _ in range(2):
+        assert await asyncio.to_thread(entered.acquire, True, 5)
+    resp = await client.post("/api/v1/info", json={"url": URL}, headers=bearer())
+    assert resp.status == 429 and (await resp.json())["error"]["code"] == "busy"
+    resp = await asyncio.wait_for(client.post("/api/v1/jobs", json={"url": URL, "kind": "audio"}, headers=bearer()), 3)
+    assert resp.status == 201
+    release.set()
+    assert [(await p).status for p in probes] == [200, 200]
+    assert (await client.post("/api/v1/info", json={"url": URL}, headers=bearer())).status == 200
+    wait_for(manager, (await resp.json())["id"], "done")
+    manager.shutdown()
+
+
+async def test_no_job_starts_on_a_nearly_full_partition(aiohttp_client, tmp_path):
+    scenario = Scenario()
+    fetcher = Fetcher(False, scenario.ydl_class(), resolve=resolve, free_space=lambda _: 500 * 1024 * 1024)
+    manager = JobManager(fetcher, tmp_path / "jobs", 2, 3600)
+    manager.start()
+    client = await aiohttp_client(create_app(manager, TOKEN, {}, "0.3.0"))
+    resp = await client.post("/api/v1/jobs", json={"url": URL, "kind": "audio"}, headers=bearer())
+    assert resp.status == 507 and (await resp.json())["error"]["code"] == "insufficient_storage"
+    assert manager.snapshots() == []
+    manager.shutdown()
+
+
+async def test_a_token_beyond_ascii_is_refused_not_a_crash(manager, aiohttp_client):
+    client = await aiohttp_client(create_app(manager, "schlüssel", {}, "0.3.0"))
+    for value in ("Bearer ä", "Bearer wrong", "Bearer schlüssel"):
+        resp = await client.get("/api/v1/jobs", headers={"Authorization": value.encode().decode("latin-1")})
+        assert resp.status in (200, 401)
+    resp = await client.get("/api/v1/jobs", headers={"Authorization": "Bearer ä".encode().decode("latin-1")})
+    assert resp.status == 401
+
+
+def test_bearer_compares_bytes():
+    from types import SimpleNamespace
+
+    from media_fetcher.api import bearer_ok
+    assert bearer_ok(SimpleNamespace(headers={"Authorization": "Bearer schlüssel"}), "schlüssel")
+    assert not bearer_ok(SimpleNamespace(headers={"Authorization": "Bearer ä"}), "abc")
+    assert not bearer_ok(SimpleNamespace(headers={"Authorization": "Bearer abc"}), "")
+
+
+async def test_every_answer_forbids_sniffing(client):
+    for path in ("/api/v1/health", "/api/v1/jobs", "/api/v1/nothing", "/"):
+        resp = await client.get(path)
+        assert resp.headers["X-Content-Type-Options"] == "nosniff", path
+
+
+@pytest.mark.parametrize(("title", "header"), [
+    (None, 'attachment; filename="j.m4a"'),
+    ("A talk", 'attachment; filename="A talk.m4a"'),
+    ("Müller Straßenlied", "attachment; filename=\"Muller Straenlied.m4a\"; "
+                           "filename*=UTF-8''M%C3%BCller%20Stra%C3%9Fenlied.m4a"),
+    ("Песня", "attachment; filename=\"j.m4a\"; filename*=UTF-8''%D0%9F%D0%B5%D1%81%D0%BD%D1%8F.m4a"),
+])
+def test_file_names_beyond_ascii_have_a_fallback(title, header):
+    from media_fetcher.api import disposition
+    assert disposition(title, ".m4a", "j.m4a") == header
+
+
+def test_the_form_offers_exactly_the_formats_of_the_api():
+    from media_fetcher.api import _form
+    from media_fetcher.fetcher import KINDS
+    form = _form()
+    for kind, formats in KINDS.items():
+        for fmt in formats:
+            assert f'value="{kind}/{fmt}"' in form
+    assert form.count("<option") == sum(len(v) for v in KINDS.values())
+    assert 'value="audio/m4a" selected' in form
+
+
+async def test_the_page_runs_only_its_own_script_and_style(client):
+    import re
+    resp = await client.get("/")
+    policy = resp.headers["Content-Security-Policy"]
+    nonce = re.search(r"'nonce-([^']+)'", policy).group(1)
+    page = await resp.text()
+    assert page.count(f'nonce="{nonce}"') == 2 and "style=" not in page
+    assert "default-src 'none'" in policy and "frame-ancestors 'self'" in policy and "connect-src 'self'" in policy
+    again = (await client.get("/")).headers["Content-Security-Policy"]
+    assert again != policy

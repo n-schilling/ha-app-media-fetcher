@@ -8,18 +8,22 @@ import os
 import signal
 import socket
 import sys
+import time
 from pathlib import Path
 
 from aiohttp import web
 
 from . import config as cfg_module
 from .api import PORT, create_app
-from .fetcher import Fetcher, versions
+from .fetcher import MB, Fetcher, versions
 from .jobs import JobManager
 
 LOGGER = logging.getLogger("media_fetcher")
 JOBS = Path("/data/jobs")
 EXPIRE_EVERY = 60
+# Seconds the job threads get to stop after the API is down; a running
+# conversion does not notice the cancel, and the files go at the next start
+GRACE = 5
 
 
 def hostname() -> str:
@@ -31,7 +35,8 @@ async def expire_loop(manager: JobManager) -> None:
     while True:
         await asyncio.sleep(EXPIRE_EVERY)
         try:
-            manager.expire()
+            # Deleting large files takes a while; the API keeps answering
+            await asyncio.to_thread(manager.expire)
         except Exception:
             LOGGER.exception("Expiring jobs failed")
 
@@ -40,7 +45,8 @@ async def serve(cfg: cfg_module.Config, manager: JobManager, found: dict, versio
     host = hostname()
     app = create_app(manager, cfg.token, found, version, slug=host.replace("-", "_"),
                      settings={"max_jobs": cfg.max_jobs, "keep_minutes": cfg.keep_minutes,
-                               "allow_any_site": cfg.allow_any_site, "token_set": bool(cfg.token)})
+                               "max_size_mb": cfg.max_size_mb, "allow_any_site": cfg.allow_any_site,
+                               "token_set": bool(cfg.token)})
     runner = web.AppRunner(app, access_log=None)
     await runner.setup()
     await web.TCPSite(runner, "0.0.0.0", PORT).start()
@@ -80,9 +86,24 @@ def main() -> None:
         LOGGER.warning("No JavaScript runtime: many sites will refuse or fail")
     if not found["ffmpeg"]:
         LOGGER.warning("No ffmpeg: no conversions and no merged video")
-    manager = JobManager(Fetcher(cfg.allow_any_site), JOBS, cfg.max_jobs, cfg.keep_minutes * 60)
+    manager = JobManager(Fetcher(cfg.allow_any_site, max_size=cfg.max_size_mb * MB), JOBS, cfg.max_jobs,
+                         cfg.keep_minutes * 60)
     manager.start()
     asyncio.run(serve(cfg, manager, found, version))
+    finish(manager)
+
+
+def finish(manager: JobManager, grace: float = GRACE, exit_now=os._exit) -> None:
+    """Ends the process once the job threads have stopped, or after grace
+    seconds anyway: Python would otherwise wait for every thread, and a
+    conversion or a probe can run for minutes."""
+    deadline = time.monotonic() + grace
+    while manager.running() and time.monotonic() < deadline:
+        time.sleep(0.1)
+    if manager.running():
+        LOGGER.info("Stopped with %d jobs still running; their files go at the next start", manager.running())
+    logging.shutdown()
+    exit_now(0)
 
 
 if __name__ == "__main__":

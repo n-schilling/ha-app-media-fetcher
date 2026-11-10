@@ -323,3 +323,105 @@ def test_streams_yt_dlp_downloads_itself_pass(info, tmp_path):
     path = Fetcher(False, scenario.ydl_class(), resolve=resolve).download("https://x.test/v", "audio", "m4a", None,
                                                                           tmp_path / "j", "j", Recorder())
     assert path.exists() and f.stream_protocols(info)
+
+
+# --- NAT64 ---------------------------------------------------------------------------------------
+@pytest.mark.parametrize(("address", "public"), [("64:ff9b::a00:1", False), ("64:ff9b::c0a8:101", False),
+                                                 ("64:ff9b::5db8:d822", True), ("::ffff:10.0.0.9", False)])
+def test_embedded_ipv4_addresses_are_judged_by_themselves(address, public):
+    assert f._address(address).is_global is public
+    refused = f.private_destination(f"http://[{address}]/x", resolve)
+    assert (refused is None) is public
+
+
+# --- sizes, free space, unknown lengths ----------------------------------------------------------
+GB = 1024 * 1024 * 1024
+
+
+def sized(scenario, max_size=None, free=10 * GB):
+    return Fetcher(False, scenario.ydl_class(), resolve=resolve, max_size=max_size, free_space=lambda _: free)
+
+
+def test_a_file_the_site_announces_as_too_large_is_refused_before_the_download(tmp_path):
+    scenario = Scenario(info={**VIDEO, "filesize": 5_000_000})
+    with pytest.raises(FetchError) as err:
+        sized(scenario, 2_000_000).download("https://x.test/v", "audio", "m4a", None, tmp_path / "j", "j", Recorder())
+    assert err.value.code == "too_large" and "5 MB" in err.value.message and "2 MB" in err.value.message
+    assert scenario.processed == 0
+
+
+def test_the_size_of_merged_streams_counts_together(tmp_path):
+    parts = [{"protocol": "https", "filesize": 800}, {"protocol": "https", "filesize_approx": 300}]
+    assert f.expected_size({"requested_formats": parts}) == 1100
+    assert f.expected_size({"requested_formats": [{"filesize": 800}, {}]}) is None
+    assert f.expected_size({}) is None
+
+
+def test_a_download_that_grows_too_large_stops(tmp_path):
+    scenario = Scenario(size=1000)
+    with pytest.raises(FetchError) as err:
+        sized(scenario, 600).download("https://x.test/v", "audio", "m4a", None, tmp_path / "j", "j", Recorder())
+    assert err.value.code == "too_large"
+
+
+def test_a_conversion_that_makes_the_file_too_large_fails(tmp_path):
+    scenario = Scenario(size=500, converted_size=900)
+    with pytest.raises(FetchError) as err:
+        sized(scenario, 800).download("https://x.test/v", "audio", "wav", None, tmp_path / "j", "j", Recorder())
+    assert err.value.code == "too_large"
+    assert sized(Scenario(size=500, converted_size=700), 800).download(
+        "https://x.test/v", "audio", "wav", None, tmp_path / "k", "k", Recorder()).stat().st_size == 700
+
+
+def test_a_download_stops_when_the_partition_runs_low(tmp_path):
+    fetcher = sized(Scenario(), None, free=GB // 2)
+    assert fetcher.space_left(tmp_path) is False and sized(Scenario()).space_left(tmp_path) is True
+    with pytest.raises(FetchError) as err:
+        fetcher.download("https://x.test/v", "audio", "m4a", None, tmp_path / "j", "j", Recorder())
+    assert err.value.code == "insufficient_storage"
+
+
+def test_free_space_looks_at_the_nearest_existing_folder(tmp_path):
+    assert f._free_space(tmp_path / "not" / "there") > 0
+
+
+def test_an_unknown_length_fails_a_max_duration(tmp_path):
+    scenario = Scenario(info={**VIDEO, "duration": None})
+    fetcher = Fetcher(False, scenario.ydl_class(), resolve=resolve)
+    with pytest.raises(FetchError) as err:
+        fetcher.download("https://x.test/v", "audio", "m4a", 600, tmp_path / "j", "j", Recorder())
+    assert err.value.code == "too_long" and "does not tell" in err.value.message and scenario.processed == 0
+    assert fetcher.download("https://x.test/v", "audio", "m4a", None, tmp_path / "k", "k", Recorder()).exists()
+
+
+# --- ffmpeg reads local media files only --------------------------------------------------------
+@pytest.mark.parametrize("head", [b"<?xml version='1.0'?><MPD xmlns='urn:mpeg:dash:schema:mpd:2011'>",
+                                  b"#EXTM3U\n#EXT-X-VERSION:3\nhttp://10.0.0.1/seg.ts\n", b"ffconcat version 1.0\n"])
+def test_a_manifest_in_disguise_never_reaches_ffmpeg(head, tmp_path):
+    scenario = Scenario(content=head * 20)
+    with pytest.raises(FetchError) as err:
+        Fetcher(False, scenario.ydl_class(), resolve=resolve).download(
+            "https://x.test/v", "audio", "m4a", None, tmp_path / "j", "j", Recorder())
+    assert (err.value.code, err.value.message) == ("convert_failed", "the download is no media file")
+
+
+@pytest.mark.parametrize("head", [b"\x00\x00\x00\x20ftypisom", b"\x1a\x45\xdf\xa3", b"OggS\x00\x02",
+                                  b"fLaC\x00\x00\x00\x22", b"ID3\x04\x00", b"\xff\xfb\x90\x64", b"RIFF\x24\x08\x00\x00WAVE"])
+def test_media_files_pass_the_sniff(head, tmp_path):
+    path = tmp_path / "a"
+    path.write_bytes(head + b"rest of the file " * 40)
+    assert f.is_media(path)
+    assert f.is_media(tmp_path / "missing") and f.is_media(tmp_path / "a") is True
+    (tmp_path / "empty").write_bytes(b"")
+    assert f.is_media(tmp_path / "empty")
+
+
+def test_every_ffmpeg_postprocessor_reads_files_only():
+    args = f.base_options(False)["postprocessor_args"]
+    for key in ("extractaudio+ffmpeg_i", "videoremuxer+ffmpeg_i", "merger+ffmpeg_i", "fixupm4a+ffmpeg_i"):
+        assert args[key] == ["-protocol_whitelist", "file"]
+    # yt-dlp looks the arguments up under exactly these keys
+    from yt_dlp.postprocessor import FFmpegExtractAudioPP
+    from yt_dlp.utils import _configuration_args
+    assert _configuration_args(FFmpegExtractAudioPP.pp_key(), args, "ffmpeg", ["_i1", "_i"]) == [
+        "-protocol_whitelist", "file"]

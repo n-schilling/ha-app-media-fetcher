@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Media Fetcher
-  version: 0.2.0
+  version: 0.3.0
   summary: Fetches audio or video from links yt-dlp understands, as a service in Home Assistant's app network
   description: |
     A small HTTP service of the Media Fetcher app for Home Assistant. `info` tells what a link
@@ -98,6 +98,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+        "429":
+          description: As many links as the app's `max_jobs` are being looked at already (`busy`)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
   /jobs:
     get:
       operationId: listJobs
@@ -123,7 +129,8 @@ paths:
         and converts it with ffmpeg where needed; a stream that already has the codec is copied,
         not re-encoded. Video takes the best video and audio streams, merged into the wanted
         container without re-encoding. A finished job and its file stay for the app's
-        `keep_minutes`, then they are deleted.
+        `keep_minutes`, then they are deleted. A file larger than the app's `max_size_mb` fails
+        with `too_large`.
       requestBody:
         required: true
         content:
@@ -149,6 +156,12 @@ paths:
                 $ref: "#/components/schemas/Error"
         "429":
           description: As many jobs as the app's `max_jobs` are running (`busy`)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "507":
+          description: Less than 1 GiB is free on Home Assistant's data partition (`insufficient_storage`)
           content:
             application/json:
               schema:
@@ -389,7 +402,7 @@ components:
         max_duration:
           type: integer
           minimum: 1
-          description: Seconds; a longer video fails with `too_long` before anything is downloaded. Unknown durations pass
+          description: Seconds; a longer video fails with `too_long` before anything is downloaded, and so does one whose site does not tell its length
           examples: [3600]
     JobCreated:
       type: object
@@ -458,15 +471,20 @@ components:
               properties:
                 code:
                   type: string
-                  enum: [unsupported_url, not_available, live, extract_failed, too_long, download_failed, convert_failed]
+                  enum: [unsupported_url, not_available, live, extract_failed, too_long, too_large,
+                         insufficient_storage, download_failed, convert_failed]
                   description: |
                     `unsupported_url`: no extractor, a playlist, a non-public host or a stream
                     protocol yt-dlp cannot download itself; `not_available`: the site refuses
                     it (unavailable, private, removed, members only, sign-in, not in your
                     country); `live`: a live stream, an event that has not started or a
                     premiere; `extract_failed`: anything else yt-dlp reports before
-                    downloading; `too_long`: longer than `max_duration`; `download_failed`
-                    and `convert_failed`: the phase that failed
+                    downloading; `too_long`: longer than `max_duration`, or of unknown length
+                    while `max_duration` is set; `too_large`: larger than the app's
+                    `max_size_mb`; `insufficient_storage`: the data partition ran low while
+                    downloading; `download_failed` and `convert_failed`: the phase that failed
+                    (`convert_failed` also for a download that is a playlist or manifest
+                    instead of a media file)
                 message:
                   type: string
         created:

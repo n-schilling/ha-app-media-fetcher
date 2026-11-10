@@ -35,7 +35,8 @@ class Scenario:
     def __init__(self, info: dict | None = None, extract_error: str | None = None,
                  download_error: str | None = None, convert_error: str | None = None,
                  size: int = 1000, ext: str = "m4a", converter: str | None = "ExtractAudio",
-                 gate: threading.Event | None = None) -> None:
+                 gate: threading.Event | None = None, content: bytes | None = None,
+                 converted_size: int | None = None) -> None:
         self.info = dict(VIDEO) if info is None else info
         self.extract_error = extract_error
         self.download_error = download_error
@@ -44,6 +45,10 @@ class Scenario:
         self.ext = ext
         self.converter = converter
         self.gate = gate
+        # What the download writes: binary, like a media file, unless a test
+        # hands in text
+        self.content = content if content is not None else (b"\x00\x00\x00\x18ftyp" + b"\x01" * size)[:size]
+        self.converted_size = converted_size
         self.instances: list[FakeYoutubeDL] = []
         self.extracted: list[str] = []
         self.processed = 0
@@ -93,16 +98,18 @@ class FakeYoutubeDL:
         fire(status="downloading", downloaded_bytes=s.size // 2, total_bytes=s.size)
         if s.download_error:
             raise DownloadError(s.download_error)
-        tmp.write_bytes(b"x" * s.size)
+        tmp.write_bytes(s.content)
         fire(status="finished", downloaded_bytes=s.size, total_bytes=s.size)
         final = tmp
         if s.converter:
             for hook in pp_hooks:
-                hook({"status": "started", "postprocessor": s.converter, "info_dict": info})
+                hook({"status": "started", "postprocessor": s.converter, "info_dict": {**info, "filepath": str(tmp)}})
             if s.convert_error:
                 raise DownloadError(f"ERROR: Postprocessing: {s.convert_error}")
             final = tmp.with_suffix(f".{s.ext}")
             tmp.rename(final)
+            if s.converted_size is not None:
+                final.write_bytes(b"\x01" * s.converted_size)
             for hook in pp_hooks:
                 hook({"status": "finished", "postprocessor": s.converter, "info_dict": info})
         for hook in post_hooks:

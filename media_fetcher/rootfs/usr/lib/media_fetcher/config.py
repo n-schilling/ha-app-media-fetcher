@@ -19,6 +19,7 @@ class Config:
     token: str               # the API token for clients other than Home Assistant Core; "" when none
     max_jobs: int            # jobs that run at the same time
     keep_minutes: int        # minutes a finished job and its file stay
+    max_size_mb: int         # megabytes (10^6 bytes) a job's file may have
     allow_any_site: bool     # also yt-dlp's generic extractor
     log_level: str
 
@@ -44,6 +45,7 @@ def load(path: Path = OPTIONS) -> Config:
         token=str(opts.get("token") or "").strip(),
         max_jobs=_int(opts, "max_jobs", 2, 1, 8),
         keep_minutes=_int(opts, "keep_minutes", 60, 1, 1440),
+        max_size_mb=_int(opts, "max_size_mb", 2000, 1, 100000),
         allow_any_site=bool(opts.get("allow_any_site", False)),
         log_level=level,
     )

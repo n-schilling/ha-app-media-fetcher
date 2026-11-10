@@ -10,7 +10,6 @@ clears the root.
 from __future__ import annotations
 
 import logging
-import mimetypes
 import secrets
 import shutil
 import threading
@@ -34,8 +33,9 @@ CONTENT_TYPES = {
 
 
 def content_type(path: Path) -> str:
-    ext = path.suffix.lstrip(".").lower()
-    return CONTENT_TYPES.get(ext) or mimetypes.guess_type(path.name)[0] or "application/octet-stream"
+    """By the fixed table only: a guess could name text/html or SVG, which a
+    browser would render in Home Assistant's origin."""
+    return CONTENT_TYPES.get(path.suffix.lstrip(".").lower(), "application/octet-stream")
 
 
 def iso(ts: float | None) -> str | None:
@@ -113,8 +113,10 @@ class JobManager:
         self._clock = clock
         self._lock = threading.Lock()
         self._jobs: dict[str, Job] = {}
+        self._running = 0
         self._pool = ThreadPoolExecutor(max_workers=max_jobs, thread_name_prefix="job")
-        # Probes for the info endpoint, apart from the jobs
+        # Probes for the info endpoint, apart from the jobs; at most max_jobs
+        # at a time, the API refuses more
         self.probe_pool = ThreadPoolExecutor(max_workers=max_jobs, thread_name_prefix="probe")
 
     def start(self) -> None:
@@ -162,7 +164,9 @@ class JobManager:
 
     def delete(self, job_id: str) -> bool:
         """Cancels a running job (its thread cleans up) or removes a finished
-        one with its file. False for an unknown job."""
+        one with its file. False for an unknown job. A job whose thread is
+        still finishing counts as running, whatever its state says: the
+        thread removes it and its files when it is through."""
         with self._lock:
             job = self._jobs.get(job_id)
             if job is None:
@@ -173,7 +177,7 @@ class JobManager:
             else:
                 directory = None
                 job.cancel.set()
-                if job.state in ACTIVE:
+                if job.state != "cancelled":
                     job.state = "cancelled"
                     job.finished = self._clock()
         if directory:
@@ -198,15 +202,23 @@ class JobManager:
         return len(gone)
 
     def shutdown(self) -> None:
+        """Cancels every job; running threads stop at yt-dlp's next step."""
         with self._lock:
             for job in self._jobs.values():
                 job.cancel.set()
         self._pool.shutdown(wait=False, cancel_futures=True)
         self.probe_pool.shutdown(wait=False, cancel_futures=True)
 
+    def running(self) -> int:
+        """Job threads that have started and not finished yet."""
+        with self._lock:
+            return self._running
+
     # --- the job's thread ------------------------------------------------
     def _run(self, job: Job) -> None:
         started = self._clock()
+        with self._lock:
+            self._running += 1
         try:
             if job.is_cancelled():
                 raise DownloadCancelled("cancelled")
@@ -238,6 +250,7 @@ class JobManager:
                 job.error = {"code": "download_failed", "message": clean_message(str(err) or type(err).__name__)}
         finally:
             with self._lock:
+                self._running -= 1
                 job.settled = True
                 keep_entry = job.state != "cancelled"
                 if not keep_entry:

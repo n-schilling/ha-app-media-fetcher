@@ -8,6 +8,9 @@ configuration:
   keep_minutes:
     name: Fertige Aufträge behalten
     description: Minuten, die ein fertiger Auftrag und seine Datei abrufbar bleiben, bevor sie gelöscht werden.
+  max_size_mb:
+    name: Größte Datei
+    description: Megabyte, die eine geholte Datei haben darf; eine größere scheitert mit „too_large“. Aufträge stoppen außerdem, solange auf der Datenpartition von Home Assistant weniger als 1 GiB frei ist.
   allow_any_site:
     name: Beliebige Seiten erlauben
     description: Auch den generischen Extractor von yt-dlp nutzen, der Medien von jeder öffentlichen Seite zu holen versucht. Aus werden nur Seiten geholt, für die yt-dlp einen Extractor hat. Links auf Adressen im eigenen Netz werden so oder so abgewiesen.

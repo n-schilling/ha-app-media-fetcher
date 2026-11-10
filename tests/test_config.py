@@ -16,6 +16,7 @@ def write(tmp_path, **options):
 def test_defaults_without_a_token(tmp_path):
     cfg = load(write(tmp_path))
     assert (cfg.max_jobs, cfg.keep_minutes, cfg.allow_any_site, cfg.log_level) == (2, 60, False, "INFO")
+    assert cfg.max_size_mb == 2000
     assert cfg.token == ""
     assert load(write(tmp_path, token="  ")).token == ""
 
@@ -27,7 +28,8 @@ def test_a_set_token_is_kept(tmp_path):
 
 
 @pytest.mark.parametrize("bad", [{"max_jobs": 0}, {"max_jobs": "2"}, {"max_jobs": True}, {"keep_minutes": 0},
-                                 {"keep_minutes": 100000}, {"log_level": "loud"}])
+                                 {"keep_minutes": 100000}, {"log_level": "loud"}, {"max_size_mb": 0},
+                                 {"max_size_mb": 100001}])
 def test_invalid_values_are_named(tmp_path, bad):
     with pytest.raises(ConfigError, match=next(iter(bad))):
         load(write(tmp_path, **bad))
@@ -39,3 +41,13 @@ def test_unreadable_options(tmp_path):
     (tmp_path / "list.json").write_text("[]")
     with pytest.raises(ConfigError, match="no options"):
         load(tmp_path / "list.json")
+
+
+def test_the_config_defaults_match_the_code(tmp_path):
+    import yaml
+    from pathlib import Path
+    config = yaml.safe_load((Path(__file__).resolve().parents[1] / "media_fetcher/config.yaml").read_text())
+    cfg = load(write(tmp_path, **config["options"]))
+    assert cfg == load(write(tmp_path))
+    assert set(config["options"]) == set(config["schema"]) == {
+        "token", "max_jobs", "keep_minutes", "max_size_mb", "allow_any_site", "log_level"}

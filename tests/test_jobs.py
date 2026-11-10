@@ -18,7 +18,7 @@ def test_a_job_runs_to_done(manager, scenario):
     assert done["done_bytes"] == 1000 and done["total_bytes"] == 1000
     assert done["created"] == "2023-11-14T22:13:20Z" and done["finished"] == done["created"]
     path, kind, name = manager.file(job.id)
-    assert path.read_bytes() == b"x" * 1000 and kind == "audio/mp4" and name == f"{job.id}.m4a"
+    assert path.read_bytes() == Scenario().content and kind == "audio/mp4" and name == f"{job.id}.m4a"
     assert manager.snapshots() == [done]
 
 
@@ -120,4 +120,51 @@ def test_content_types_and_times(tmp_path):
     assert content_type(tmp_path / "a.m4a") == "audio/mp4"
     assert content_type(tmp_path / "a.MKV") == "video/x-matroska"
     assert content_type(tmp_path / "a.nothing") == "application/octet-stream"
+    for odd in ("a.html", "a.svg", "a.js", "a.txt"):
+        assert content_type(tmp_path / odd) == "application/octet-stream"
     assert iso(None) is None and iso(0) is None and iso(1_700_000_000) == "2023-11-14T22:13:20Z"
+
+
+def test_deleting_a_job_while_its_thread_finishes_removes_it(tmp_path, clock, monkeypatch):
+    """Between "done" and the end of its thread a job is done but not yet
+    settled; a delete then must not be lost."""
+    from media_fetcher import jobs
+    reached, go_on = threading.Event(), threading.Event()
+    real = jobs.LOGGER.info
+
+    def held(message, *args):
+        if message.startswith("Job %s done"):
+            reached.set()
+            go_on.wait(5)
+        real(message, *args)
+
+    monkeypatch.setattr(jobs.LOGGER, "info", held)
+    scenario = Scenario()
+    manager = JobManager(Fetcher(False, scenario.ydl_class(), resolve=resolve), tmp_path / "jobs", 2, 3600, clock)
+    manager.start()
+    job = manager.create("https://x.test/v", "audio", "m4a", None)
+    assert reached.wait(5) and manager.snapshot(job.id)["state"] == "done" and not job.settled
+    assert manager.delete(job.id) is True
+    assert manager.snapshot(job.id)["state"] == "cancelled"
+    go_on.set()
+    assert wait_for(manager, job.id, None) is None
+    assert not (tmp_path / "jobs" / job.id).exists()
+    manager.shutdown()
+
+
+def test_running_counts_the_threads(tmp_path, clock):
+    gate = threading.Event()
+    scenario = Scenario(gate=gate)
+    manager = JobManager(Fetcher(False, scenario.ydl_class(), resolve=resolve), tmp_path / "jobs", 2, 3600, clock)
+    manager.start()
+    assert manager.running() == 0
+    job = manager.create("https://x.test/v", "audio", "m4a", None)
+    wait_for(manager, job.id, "downloading")
+    assert manager.running() == 1
+    gate.set()
+    wait_for(manager, job.id, "done")
+    deadline = __import__("time").monotonic() + 5
+    while manager.running() and __import__("time").monotonic() < deadline:
+        pass
+    assert manager.running() == 0
+    manager.shutdown()

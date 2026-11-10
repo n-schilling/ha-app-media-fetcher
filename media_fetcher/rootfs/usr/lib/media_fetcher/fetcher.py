@@ -22,6 +22,7 @@ from typing import Protocol
 from urllib.parse import urlsplit
 
 import yt_dlp
+import yt_dlp.postprocessor
 from yt_dlp.downloader.external import FFmpegFD
 from yt_dlp.postprocessor import FFmpegPostProcessor
 from yt_dlp.utils import DownloadCancelled, DownloadError
@@ -39,6 +40,15 @@ CONVERTERS = frozenset({"ExtractAudio", "VideoRemuxer", "VideoConvertor", "Merge
 PROTOCOLS = frozenset({"http", "https", "m3u8", "m3u8_native", "http_dash_segments",
                        "http_dash_segments_generator", "ism", "f4m"})
 MESSAGE_LENGTH = 200
+MB = 1000 * 1000
+# Free space the jobs leave on the data partition, which the app shares with
+# Home Assistant's configuration, database and backups
+RESERVE = 1024 * 1024 * 1024
+# How often a download looks at the free space: every this many bytes
+SPACE_CHECK_EVERY = 16 * 1024 * 1024
+# A media file is binary from its first bytes; text there is a playlist or
+# manifest, which ffmpeg would follow to other addresses on its own
+SNIFF_LENGTH = 512
 
 # Error codes of the API, by what yt-dlp says; the first match wins
 UNSUPPORTED = re.compile(r"unsupported url|no suitable extractor", re.I)
@@ -49,6 +59,16 @@ NOT_AVAILABLE = re.compile(
     r"terminated|no video formats|requested format is not available|geo", re.I)
 # "ERROR: " and then "[extractor] id: " in front of yt-dlp's messages
 PREFIX = re.compile(r"^(?:ERROR:\s*)?(?:\[[^\]]+\]\s*(?:\S+:\s+(?!\d))?)?")
+
+
+# ffmpeg converts local files only and opens no address a file names. yt-dlp
+# takes input arguments per postprocessor ("<key>+ffmpeg_i"), so every one of
+# its ffmpeg postprocessors gets them
+FFMPEG_INPUT_ARGS = {
+    f"{cls.pp_key().lower()}+ffmpeg_i": ["-protocol_whitelist", "file"]
+    for cls in vars(yt_dlp.postprocessor).values()
+    if isinstance(cls, type) and issubclass(cls, FFmpegPostProcessor) and cls is not FFmpegPostProcessor
+}
 
 
 class FetchError(Exception):
@@ -72,12 +92,24 @@ class Report(Protocol):
 HOSTNAME = re.compile(r"[\w.\-]+|[0-9A-Fa-f:.]+")
 
 
+# The well-known NAT64 prefix: behind a NAT64 gateway, 64:ff9b::a00:1 is
+# 10.0.0.1, although Python counts the prefix as global
+NAT64 = ipaddress.ip_network("64:ff9b::/96")
+
+
 def _address(text: str) -> ipaddress.IPv4Address | ipaddress.IPv6Address | None:
+    """The address to judge: an IPv4 address embedded in IPv6 (mapped or
+    NAT64) stands for itself."""
     try:
         ip = ipaddress.ip_address(text)
     except ValueError:
         return None
-    return getattr(ip, "ipv4_mapped", None) or ip
+    if isinstance(ip, ipaddress.IPv6Address):
+        if ip.ipv4_mapped:
+            return ip.ipv4_mapped
+        if ip in NAT64:
+            return ipaddress.IPv4Address(int(ip) & 0xFFFFFFFF)
+    return ip
 
 
 def private_destination(url: str, resolve=socket.getaddrinfo) -> tuple[str, str] | None:
@@ -209,6 +241,7 @@ def base_options(allow_any_site: bool) -> dict:
         # subprocess or another thread would
         "external_downloader": {"default": "native"},
         "concurrent_fragment_downloads": 1,
+        "postprocessor_args": FFMPEG_INPUT_ARGS,
     }
 
 
@@ -263,11 +296,19 @@ class Fetcher:
     """Runs yt-dlp. Blocking: call it from a thread. ydl_class stands in for
     yt_dlp.YoutubeDL in the tests."""
 
-    def __init__(self, allow_any_site: bool, ydl_class=yt_dlp.YoutubeDL, resolve=socket.getaddrinfo) -> None:
+    def __init__(self, allow_any_site: bool, ydl_class=yt_dlp.YoutubeDL, resolve=socket.getaddrinfo, *,
+                 max_size: int | None = None, free_space=None) -> None:
         self.allow_any_site = allow_any_site
+        self.max_size = max_size          # bytes a job's file may have; None: no limit
         self._ydl_class = ydl_class
         self._resolve = resolve
+        self._free_space = free_space or _free_space
         install_guard()
+
+    def space_left(self, directory: Path) -> bool:
+        """Whether a job may start: the data partition has more than RESERVE
+        free."""
+        return self._free_space(directory) > RESERVE
 
     def check(self, url: str) -> None:
         """Refuses a link to a non-public address before yt-dlp sees it."""
@@ -303,29 +344,57 @@ class Fetcher:
         self.check(url)
         phase = "probing"
         final: list[str] = []
+        # Why the job stops, when a hook stops it: yt-dlp passes only
+        # DownloadCancelled through unchanged
+        stopped: list[FetchError] = []
+        finished_bytes = 0                # of the streams already downloaded
+        next_space_check = 0
+
+        def stop(code: str, message: str) -> None:
+            stopped.append(FetchError(code, message))
+            raise DownloadCancelled(message)
 
         def check_cancelled() -> None:
             if report.is_cancelled():
                 raise DownloadCancelled("cancelled")
 
+        def check_size(done: int, total: int | None) -> None:
+            nonlocal next_space_check
+            if self.max_size is not None:
+                if max(done, total or 0) + finished_bytes > self.max_size:
+                    stop("too_large", f"larger than the limit of {self.max_size // MB} MB")
+            if done + finished_bytes >= next_space_check:
+                next_space_check = done + finished_bytes + SPACE_CHECK_EVERY
+                if not self.space_left(directory):
+                    stop("insufficient_storage", "the data partition is nearly full")
+
         def on_progress(status: dict) -> None:
-            nonlocal phase
+            nonlocal phase, finished_bytes
             check_cancelled()
+            done = status.get("downloaded_bytes") or 0
             if status.get("status") == "downloading":
                 if phase != "downloading":
                     phase = "downloading"
                     report.set_state("downloading")
-                report.progress(status.get("downloaded_bytes") or 0,
-                                status.get("total_bytes") or status.get("total_bytes_estimate"))
+                total = status.get("total_bytes") or status.get("total_bytes_estimate")
+                check_size(done, total)
+                report.progress(done, total)
             elif status.get("status") == "finished":
-                total = status.get("total_bytes") or status.get("downloaded_bytes")
-                report.progress(status.get("downloaded_bytes") or total or 0, total)
+                total = status.get("total_bytes") or done
+                check_size(done or total or 0, total)
+                report.progress(done or total or 0, total)
+                finished_bytes += done or total or 0
 
         def on_postprocess(status: dict) -> None:
             nonlocal phase
             check_cancelled()
-            if (status.get("status") == "started" and status.get("postprocessor") in CONVERTERS
-                    and phase != "converting"):
+            if status.get("status") != "started":
+                return
+            info = status.get("info_dict") or {}
+            for path in (info.get("__files_to_merge") or [info.get("filepath")]):
+                if path and not is_media(Path(path)):
+                    stop("convert_failed", "the download is no media file")
+            if status.get("postprocessor") in CONVERTERS and phase != "converting":
                 phase = "converting"
                 report.set_state("converting")
 
@@ -339,8 +408,13 @@ class Fetcher:
             if info.get("is_live"):
                 raise FetchError("live", "live streams cannot be fetched")
             duration = info.get("duration")
-            if max_duration and isinstance(duration, (int, float)) and duration > max_duration:
+            if max_duration and not isinstance(duration, (int, float)):
+                raise FetchError("too_long", f"the site does not tell the length, the limit is {max_duration} s")
+            if max_duration and duration > max_duration:
                 raise FetchError("too_long", f"{int(duration)} s long, the limit is {max_duration} s")
+            size = expected_size(info)
+            if self.max_size is not None and size and size > self.max_size:
+                raise FetchError("too_large", f"about {size // MB} MB, the limit is {self.max_size // MB} MB")
             odd = [proto for proto in stream_protocols(info) if proto not in PROTOCOLS]
             if odd:
                 raise FetchError("unsupported_url", f"stream protocol {odd[0] or 'unknown'} is not supported")
@@ -353,6 +427,8 @@ class Fetcher:
                 # result back the way it loads its own info files
                 ydl.process_ie_result(ydl.sanitize_info(info, remove_private_keys=True), download=True)
             except DownloadCancelled:
+                if stopped:
+                    raise stopped[0] from None
                 raise
             except DownloadError as err:
                 raise FetchError(_phase_code(phase), clean_message(str(err))) from err
@@ -361,7 +437,46 @@ class Fetcher:
         path = Path(final[-1]) if final else _only_file(directory)
         if path is None or not path.is_file():
             raise FetchError(_phase_code(phase), "yt-dlp left no file")
+        if self.max_size is not None and path.stat().st_size > self.max_size:
+            # A conversion can make the file larger than the download
+            raise FetchError("too_large", f"larger than the limit of {self.max_size // MB} MB")
         return path
+
+
+def _free_space(directory: Path) -> int:
+    """Free bytes on the partition of directory, or of its nearest existing
+    parent."""
+    for path in (directory, *directory.parents):
+        if path.exists():
+            return shutil.disk_usage(path).free
+    return 0
+
+
+def expected_size(info: dict) -> int | None:
+    """The size the streams yt-dlp picked will have, as far as the site
+    tells; None when it does not."""
+    total = 0
+    for part in info.get("requested_formats") or [info]:
+        size = part.get("filesize") or part.get("filesize_approx")
+        if not isinstance(size, (int, float)):
+            return None
+        total += int(size)
+    return total or None
+
+
+def is_media(path: Path) -> bool:
+    """False for a file that starts as text: a playlist or manifest, not
+    media. Media containers (mp4, Matroska, Ogg, FLAC, RIFF, MPEG streams)
+    carry binary header bytes from the start."""
+    try:
+        with path.open("rb") as file:
+            head = file.read(SNIFF_LENGTH)
+    except OSError:
+        return True               # gone or unreadable: ffmpeg reports that itself
+    if not head:
+        return True
+    text = sum(1 for b in head if 32 <= b < 127 or b in (9, 10, 13))
+    return text < len(head)
 
 
 def _phase_code(phase: str) -> str:

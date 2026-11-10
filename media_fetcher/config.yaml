@@ -1,8 +1,9 @@
 name: Media Fetcher
-version: "0.2.0"
+version: "0.3.0"
 slug: media_fetcher
 description: Fetches audio or video from links that yt-dlp understands, with a JavaScript runtime and ffmpeg, as a small HTTP service for integrations and automations
 url: https://github.com/n-schilling/ha-app-media-fetcher
+homeassistant: 2026.11.0
 arch:
   - aarch64
   - amd64
@@ -21,11 +22,13 @@ options:
   token: ""
   max_jobs: 2
   keep_minutes: 60
+  max_size_mb: 2000
   allow_any_site: false
   log_level: info
 schema:
   token: password?
   max_jobs: int(1,8)
   keep_minutes: int(1,1440)
+  max_size_mb: int(1,100000)
   allow_any_site: bool
   log_level: list(debug|info|warning|error)
