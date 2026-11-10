@@ -1,9 +1,14 @@
 name: CI
+# scripts/check.sh runs the same checks locally; keep the two in step.
 
 on:
   push:
     branches: [main, dev]
   pull_request:
+  schedule:
+    # Weekly, so a new base image, yt-dlp or linter release that breaks the
+    # app shows up between changes
+    - cron: "23 4 * * 1"
   workflow_dispatch:
 
 permissions:
@@ -28,6 +33,9 @@ jobs:
           shellcheck --shell=bash --severity=warning
           media_fetcher/rootfs/etc/s6-overlay/s6-rc.d/fetcher/run
           media_fetcher/rootfs/etc/s6-overlay/s6-rc.d/fetcher/finish
+          scripts/check.sh
+          .github/scripts/changelog-section.sh
+          tests/apparmor.sh
 
   unit:
     name: Unit tests
@@ -39,14 +47,24 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
-          # Debian trixie's Python, the one in the image
-          python-version: "3.13"
+          # 3.13 is Debian trixie's Python, the one in the image; 3.14 the
+          # current one. The last one listed is the default python.
+          python-version: |
+            3.13
+            3.14
       - name: Install
-        run: pip install -r media_fetcher/requirements.txt pytest==9.1.1 pytest-aiohttp==1.1.1 pyyaml==6.0.3 ruff==0.17.3
+        run: |
+          for py in python3.13 python3.14; do
+            "$py" -m venv ".venv-$py"
+            ".venv-$py/bin/pip" install --require-hashes -r media_fetcher/requirements.txt
+            ".venv-$py/bin/pip" install -r requirements_test.txt
+          done
       - name: Ruff
-        run: ruff check media_fetcher/rootfs/usr/lib/media_fetcher tests
-      - name: Test
-        run: pytest -v
+        run: .venv-python3.14/bin/ruff check media_fetcher/rootfs/usr/lib/media_fetcher tests scripts
+      - name: Test (Python 3.13, the image's)
+        run: .venv-python3.13/bin/pytest -v --cov=media_fetcher --cov-report=term-missing --cov-fail-under=85
+      - name: Test (Python 3.14)
+        run: .venv-python3.14/bin/pytest -q
 
   image:
     name: Build and start (${{ matrix.arch }})
@@ -93,3 +111,12 @@ jobs:
             --entrypoint python3 media-fetcher:test -m media_fetcher 2>&1 || true)
           echo "${out}"
           grep -q '/data/options.json not readable' <<< "${out}"
+      - name: AppArmor profile
+        # The runner's kernel enforces AppArmor like Home Assistant OS: the
+        # whole app starts under the profile, and ffmpeg, ffprobe and Deno
+        # run in the child profile without network. Native amd64 only; under
+        # emulation the kernel sees QEMU, not the programs.
+        if: matrix.arch == 'amd64'
+        run: |
+          sudo apparmor_parser -r -W media_fetcher/apparmor.txt
+          tests/apparmor.sh media-fetcher:test

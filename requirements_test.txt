@@ -1,0 +1,7 @@
+# Test and lint tools; the service's own packages come from
+# media_fetcher/requirements.txt (with hashes, installed separately)
+pytest==9.1.1
+pytest-aiohttp==1.1.1
+pytest-cov==7.1.0
+pyyaml==6.0.3
+ruff==0.17.3

@@ -17,9 +17,9 @@ jobs:
     name: Tag and release
     runs-on: ubuntu-latest
     # Only for pushes to main of this repository, never for pull requests or
-    # forks, which can name a branch main as well
+    # forks, which can name a branch main as well; by hand from main only
     if: >-
-      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
       (github.event.workflow_run.conclusion == 'success' &&
        github.event.workflow_run.event == 'push' &&
        github.event.workflow_run.head_repository.full_name == github.repository)
