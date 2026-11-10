@@ -425,3 +425,15 @@ def test_every_ffmpeg_postprocessor_reads_files_only():
     from yt_dlp.utils import _configuration_args
     assert _configuration_args(FFmpegExtractAudioPP.pp_key(), args, "ffmpeg", ["_i1", "_i"]) == [
         "-protocol_whitelist", "file"]
+
+
+def test_conversions_stop_writing_past_the_size_limit(tmp_path):
+    scenario = Scenario()
+    sized(scenario, 5_000_000).download("https://x.test/v", "audio", "wav", None, tmp_path / "j", "j", Recorder())
+    args = scenario.instances[-1].params["postprocessor_args"]
+    assert args["extractaudio+ffmpeg_o"] == ["-fs", "5000000"] and args["merger+ffmpeg_o"] == ["-fs", "5000000"]
+    assert args["extractaudio+ffmpeg_i"] == ["-protocol_whitelist", "file"]
+    from yt_dlp.postprocessor import FFmpegExtractAudioPP
+    from yt_dlp.utils import _configuration_args
+    assert _configuration_args(FFmpegExtractAudioPP.pp_key(), args, "ffmpeg", ["_o1", "_o", ""]) == ["-fs", "5000000"]
+    assert "extractaudio+ffmpeg_o" not in f.ffmpeg_args(None)

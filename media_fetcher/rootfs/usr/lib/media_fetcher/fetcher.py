@@ -64,11 +64,21 @@ PREFIX = re.compile(r"^(?:ERROR:\s*)?(?:\[[^\]]+\]\s*(?:\S+:\s+(?!\d))?)?")
 # ffmpeg converts local files only and opens no address a file names. yt-dlp
 # takes input arguments per postprocessor ("<key>+ffmpeg_i"), so every one of
 # its ffmpeg postprocessors gets them
-FFMPEG_INPUT_ARGS = {
-    f"{cls.pp_key().lower()}+ffmpeg_i": ["-protocol_whitelist", "file"]
-    for cls in vars(yt_dlp.postprocessor).values()
+FFMPEG_KEYS = sorted(
+    cls.pp_key().lower() for cls in vars(yt_dlp.postprocessor).values()
     if isinstance(cls, type) and issubclass(cls, FFmpegPostProcessor) and cls is not FFmpegPostProcessor
-}
+)
+FFMPEG_INPUT_ARGS = {f"{key}+ffmpeg_i": ["-protocol_whitelist", "file"] for key in FFMPEG_KEYS}
+
+
+def ffmpeg_args(max_size: int | None) -> dict:
+    """yt-dlp's postprocessor_args: files only as input, and with a size
+    limit no output beyond it. ffmpeg stops writing once a file has passed
+    the limit (-fs), so a cut file is larger than the limit and fails the
+    check after the download."""
+    if max_size is None:
+        return FFMPEG_INPUT_ARGS
+    return {**FFMPEG_INPUT_ARGS, **{f"{key}+ffmpeg_o": ["-fs", str(max_size)] for key in FFMPEG_KEYS}}
 
 
 class FetchError(Exception):
@@ -399,6 +409,7 @@ class Fetcher:
                 report.set_state("converting")
 
         opts = job_options(self.allow_any_site, kind, fmt, directory, job_id)
+        opts["postprocessor_args"] = ffmpeg_args(self.max_size)
         opts["progress_hooks"] = [on_progress]
         opts["postprocessor_hooks"] = [on_postprocess]
         opts["post_hooks"] = [final.append]
@@ -438,7 +449,8 @@ class Fetcher:
         if path is None or not path.is_file():
             raise FetchError(_phase_code(phase), "yt-dlp left no file")
         if self.max_size is not None and path.stat().st_size > self.max_size:
-            # A conversion can make the file larger than the download
+            # A conversion can make the file larger than the download; ffmpeg
+            # stopped it just past the limit
             raise FetchError("too_large", f"larger than the limit of {self.max_size // MB} MB")
         return path
 
