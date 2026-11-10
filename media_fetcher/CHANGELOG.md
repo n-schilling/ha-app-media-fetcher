@@ -2,6 +2,33 @@
 
 All notable changes to this app are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the app uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-11-10
+
+### Added
+
+- Option `max_size_mb` (default 2000): a job fails with `too_large` when the site announces a larger file, the download grows past it, or a conversion would make the file larger (ffmpeg stops writing at the limit)
+- No job starts, and running ones stop, while less than 1 GiB is free on Home Assistant's data partition: `507 insufficient_storage` when starting, `insufficient_storage` as a job's error
+- The web page shows the app's version at the bottom and follows Home Assistant's look with the stylesheet all apps of this author share; on a phone each job is one block
+- `POST /info` answers `429 busy` while as many links as `max_jobs` are being looked at
+- Requires Home Assistant 2026.11 or later
+
+### Changed
+
+- `max_duration` also refuses a link whose site does not tell its length (`too_long`), instead of letting it through
+- ffmpeg, ffprobe and Deno run under an AppArmor child profile without network, and ffmpeg reads local files only; a download that starts as text (a playlist or manifest in place of media) fails as `convert_failed` before ffmpeg sees it
+- Addresses in the NAT64 prefix `64:ff9b::/96` count as the IPv4 address they carry, so they cannot reach the home network
+- Files are served with the content type of the fixed format table only (else `application/octet-stream`), every answer carries `X-Content-Type-Options: nosniff`, and the page a content security policy
+- A download named after a title beyond ASCII gets an ASCII `filename` and the full title in `filename*`
+- The app stops within 5 seconds, also while a conversion runs
+- The base image is Home Assistant's `base-debian` of 2026.11, pinned by digest; Python packages are pinned with hashes
+
+### Fixed
+
+- Starting a job no longer waits behind slow `info` requests
+- Removing a job in the moment it finishes no longer answers 204 and keeps it
+- A token with characters beyond ASCII no longer causes a 500
+- Deleting and expiring large files no longer blocks the API
+
 ## [0.2.0] - 2026-11-07
 
 ### Changed

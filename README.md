@@ -5,7 +5,38 @@
 ![Supports aarch64](https://img.shields.io/badge/aarch64-yes-green.svg)
 ![Supports amd64](https://img.shields.io/badge/amd64-yes-green.svg)
 
-A Home Assistant app that fetches audio or video from links [yt-dlp](https://github.com/yt-dlp/yt-dlp) understands and serves the file over a small HTTP API in Home Assistant's app network, for integrations, scripts and automations. It brings [Deno](https://deno.com/) as yt-dlp's JavaScript runtime, which many sites require today and which Home Assistant's own images lack, and ffmpeg for conversions to m4a, mp3, opus, flac, wav, mp4 or mkv.
+A Home Assistant app that fetches audio or video from links [yt-dlp](https://github.com/yt-dlp/yt-dlp) understands and serves the file over a small HTTP API in Home Assistant's app network, for integrations, scripts and automations. It brings [Deno](https://deno.com/) as yt-dlp's JavaScript runtime, which many sites require today and which Home Assistant's own images lack, and ffmpeg for conversions to m4a, mp3, opus, flac, wav, mp4 or mkv. Its page in Home Assistant fetches a link by hand and lists the jobs with a download link for each file.
+
+Requires Home Assistant 2026.11 or later.
+
+## Screenshots
+
+The page looks like Home Assistant's own settings and follows the theme in use. The jobs on these pictures are made up.
+
+<img src="docs/screenshots/page.png" alt="The page: a form to fetch a link, the jobs with state, title, format and download link, the versions and settings" width="700">
+
+<img src="docs/screenshots/phone-dark.png" alt="The page on a phone in dark mode, one block per job" width="260">
+
+## Overview
+
+```mermaid
+flowchart LR
+    core["Home Assistant Core<br/>integrations, automations"] -- "HTTP API, no token" --> api
+    clients["Other apps, programs<br/>in your network"] -- "HTTP API with token" --> api
+    admin(["Administrator"]) -- "page, through ingress" --> page
+    subgraph app["Media Fetcher"]
+        api["API on port 8099"] --> jobs["Jobs<br/>max_jobs at a time"]
+        page["Web page"] --> jobs
+        jobs --> ytdlp["yt-dlp + Deno<br/>public addresses only"]
+        ytdlp --> ffmpeg["ffmpeg<br/>no network"]
+        ffmpeg --> files[("Files in /data<br/>for keep_minutes")]
+    end
+    sites["Sites on the internet"] --> ytdlp
+    files -- "GET /jobs/{id}/file" --> core
+    files -- "Download link" --> admin
+```
+
+A client asks what a link holds (`info`) or starts a job; yt-dlp fetches the media from the site, ffmpeg converts it, and the file waits in the app's data for `keep_minutes`, until the client picks it up or deletes it. Links to your own network are refused, files are limited by `max_size_mb` and by the free space of Home Assistant's data partition. The [documentation](media_fetcher/DOCS.md) has the options, the API with the job states, examples and limitations; changes are in the [changelog](media_fetcher/CHANGELOG.md).
 
 ## Installation
 
@@ -19,57 +50,41 @@ A Home Assistant app that fetches audio or video from links [yt-dlp](https://git
    https://github.com/n-schilling/ha-app-media-fetcher
    ```
 
-2. Open the app from the app store.
-3. Install **Media Fetcher** and start it. The Supervisor builds the image on your machine; that takes a few minutes.
-
-See [the documentation](media_fetcher/DOCS.md) for the options, the API, security notes and limitations. Changes are listed in the [changelog](media_fetcher/CHANGELOG.md).
-
-## The API in short
-
-Base `http://<host>:8099/api/v1`, JSON. The host is the app's name in the app network (e.g. `local-media-fetcher`). Home Assistant Core needs no token: the app knows it by its address in the app network. Every other client sends `Authorization: Bearer <token>` on everything but `health`, with the token from the `token` option; with the option empty, only Home Assistant gets in.
-
-| Endpoint | Does |
-|---|---|
-| `GET /health` | Versions of the app, yt-dlp, the JavaScript runtime and ffmpeg |
-| `POST /info` `{"url"}` | Title, duration, uploader, thumbnail of a link, without downloading |
-| `POST /jobs` `{"url", "kind": "audio"\|"video", "format", "max_duration"}` | Starts a fetch; `201 {"id", "state": "queued"}` |
-| `GET /jobs`, `GET /jobs/{id}` | State, progress, title, file name and size, error |
-| `GET /jobs/{id}/file` | The file, once the job is `done` |
-| `DELETE /jobs/{id}` | Cancels a running job or deletes a finished one with its file |
-
-```bash
-H='Authorization: Bearer <token>'
-curl -s -H "$H" -X POST http://local-media-fetcher:8099/api/v1/jobs -H 'Content-Type: application/json' \
-  -d '{"url": "https://www.youtube.com/watch?v=jNQXAC9IVRw", "kind": "audio", "format": "m4a"}'
-curl -s -H "$H" http://local-media-fetcher:8099/api/v1/jobs/<id>
-curl -s -H "$H" -o zoo.m4a http://local-media-fetcher:8099/api/v1/jobs/<id>/file
-```
-
-Errors are `{"error": {"code": "…", "message": "…"}}`: `invalid_url`, `unsupported_url`, `not_available`, `live`, `extract_failed`, `too_long`, `download_failed`, `convert_failed`, `busy`, `not_ready`, `not_found`, `unauthorized`. The whole API is described in [`openapi.yaml`](media_fetcher/rootfs/usr/lib/media_fetcher/openapi.yaml), which the service also serves at `/api/v1/openapi.yaml`.
-
-**Open web UI** on the app's page (administrators only) has a form to fetch a link and download the file, the list of jobs, and the versions in use.
-
-## Security in short
-
-Home Assistant Core is let in by its address, 172.30.32.1, the host's side of the app network, which it shares with everything else that runs in the host's network; everyone else needs the token from the options, and with none set nobody else gets in. The API has no TLS: leave port 8099 unmapped unless a client outside Home Assistant needs it, and never expose it to the internet. Links to non-public addresses (your home network, Home Assistant, the Supervisor) are refused before yt-dlp runs. `allow_any_site` lets yt-dlp's generic extractor try any public site; it is off by default. The app does not check whether you are allowed to copy what you fetch; the site's terms and the owner's rights apply.
+2. Install **Media Fetcher**, review the options and start it. The Supervisor builds the image on your machine; that takes a few minutes.
 
 ## Development
 
-The service is a Python package in [`media_fetcher/rootfs/usr/lib/media_fetcher`](media_fetcher/rootfs/usr/lib/media_fetcher): `api.py` (aiohttp, the status page), `jobs.py` (threads, files, cleanup), `fetcher.py` (yt-dlp options and error mapping). The tests replace `yt_dlp.YoutubeDL` with a fake and need no network:
+The service is a Python package in [`media_fetcher/rootfs/usr/lib/media_fetcher`](media_fetcher/rootfs/usr/lib/media_fetcher): `api.py` (aiohttp, the page), `jobs.py` (threads, files, cleanup), `fetcher.py` (yt-dlp options, limits and error mapping). The tests replace `yt_dlp.YoutubeDL` with a fake and need no network. Set up both Pythons the CI tests with (3.13 is the image's) and run every check:
 
 ```bash
-pip install -r media_fetcher/requirements.txt pytest pytest-aiohttp pyyaml ruff
-ruff check media_fetcher/rootfs/usr/lib/media_fetcher tests
-pytest
+uv venv -p 3.13 .venv && uv pip install -p .venv --require-hashes -r media_fetcher/requirements.txt && uv pip install -p .venv -r requirements_test.txt
+uv venv -p 3.14 .venv-314 && uv pip install -p .venv-314 --require-hashes -r media_fetcher/requirements.txt && uv pip install -p .venv-314 -r requirements_test.txt
+scripts/check.sh
+```
+
+`scripts/check.sh` runs what CI runs: changelog, shellcheck, ruff, the tests with coverage on both Pythons and, with Docker, the image build with its start checks (`--no-image` skips them). The app linter and the AppArmor test (`tests/apparmor.sh`, which needs a kernel with AppArmor) run in CI only.
+
+The packages are pinned with hashes; after changing `media_fetcher/requirements.in`:
+
+```bash
+cd media_fetcher && uv pip compile requirements.in --generate-hashes --universal --python-version 3.13 -o requirements.txt
+```
+
+The screenshots come from the page's own code with made-up jobs, in a headless browser:
+
+```bash
+uv run --with playwright==1.65.0 --with-requirements media_fetcher/requirements.in python scripts/screenshots.py
 ```
 
 A local image for a real run, with a fixed token:
 
 ```bash
 docker build --build-arg BUILD_VERSION=dev -t media-fetcher:dev media_fetcher
-mkdir -p /tmp/mf && echo '{"token": "dev-token", "max_jobs": 2, "keep_minutes": 60, "allow_any_site": false, "log_level": "debug"}' > /tmp/mf/options.json
+mkdir -p /tmp/mf && echo '{"token": "dev-token", "max_jobs": 2, "keep_minutes": 60, "max_size_mb": 2000, "allow_any_site": false, "log_level": "debug"}' > /tmp/mf/options.json
 docker run --rm -p 8099:8099 -v /tmp/mf:/data media-fetcher:dev
 ```
+
+Releases: work happens on `dev`; when CI is green there, `dev` goes to `main`, and a green CI run on `main` tags the version from `config.yaml` and publishes a release with its changelog section.
 
 ## Support
 
