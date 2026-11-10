@@ -389,7 +389,26 @@ async def test_the_page_runs_only_its_own_script_and_style(client):
     policy = resp.headers["Content-Security-Policy"]
     nonce = re.search(r"'nonce-([^']+)'", policy).group(1)
     page = await resp.text()
-    assert page.count(f'nonce="{nonce}"') == 2 and "style=" not in page
+    assert page.count(f'nonce="{nonce}"') == 3 and "style=" not in page
     assert "default-src 'none'" in policy and "frame-ancestors 'self'" in policy and "connect-src 'self'" in policy
     again = (await client.get("/")).headers["Content-Security-Policy"]
     assert again != policy
+
+
+async def test_the_page_shows_the_version_at_the_bottom_in_home_assistants_look(client):
+    page = await (await client.get("/")).text()
+    assert page.rstrip().endswith("</script></body></html>")
+    assert '<footer class="version">Media Fetcher 0.2.0</footer><script' in page
+    assert page.index("</main>") < page.index('<footer class="version">')
+    # The shared stylesheet, unchanged, then the page's own rules
+    from media_fetcher.api import HA_CSS
+    shared = HA_CSS.read_text()
+    assert shared.startswith("/* ha.css: Home Assistant's look") and shared in page
+    assert page.index(shared) < page.index("section.fetch {")
+    assert 'class="button filled" type="submit"' in page and 'class="icon-button"' in page
+
+
+async def test_the_version_comes_from_the_build(manager, aiohttp_client):
+    page = await (await aiohttp_client(create_app(manager, TOKEN, {}, "9.8.7", page_peers=frozenset({"127.0.0.1"}))
+                  )).get("/")
+    assert '<footer class="version">Media Fetcher 9.8.7</footer>' in await page.text()

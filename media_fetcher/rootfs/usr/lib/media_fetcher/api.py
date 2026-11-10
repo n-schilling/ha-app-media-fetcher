@@ -17,6 +17,7 @@ only, which a form on another site cannot send.
 from __future__ import annotations
 
 import asyncio
+import functools
 import hmac
 import html
 import json
@@ -297,68 +298,40 @@ async def page_file(request: web.Request) -> web.StreamResponse:
 
 
 # --- the status page -----------------------------------------------------------------------------
+# Home Assistant's look, the same file in every app (ha.css), then this
+# page's own rules
+HA_CSS = Path(__file__).resolve().parents[2] / "local/share/ha-app/ha.css"
 STYLE = """
-:root { color-scheme: light dark; --primary-background-color: #fafafa; --card-background-color: #fff;
-  --primary-text-color: #212121; --secondary-text-color: #727272; --divider-color: rgba(0,0,0,.12);
-  --primary-color: #03a9f4; --success-color: #4caf50; --warning-color: #ff9800; --error-color: #db4437;
-  --sidebar-background-color: #fff; --sidebar-text-color: #212121; --sidebar-icon-color: rgba(0,0,0,.5);
-  --app-header-border-bottom: 1px solid var(--divider-color); --ha-card-border-radius: 12px;
-  --ha-card-border-width: 1px; --ha-card-border-color: var(--divider-color); --ha-card-box-shadow: none;
-  --ha-font-family-body: Roboto, Noto, sans-serif; --header-height: 56px; }
-@media (prefers-color-scheme: dark) { :root { --primary-background-color: #111; --card-background-color: #1c1c1c;
-  --primary-text-color: #e1e1e1; --secondary-text-color: #9b9b9b; --divider-color: rgba(225,225,225,.12);
-  --sidebar-background-color: #1c1c1c; --sidebar-text-color: #e1e1e1; --sidebar-icon-color: rgba(255,255,255,.5); } }
-* { box-sizing: border-box; }
-html, body { margin: 0; background: var(--primary-background-color); color: var(--primary-text-color);
-  font: 14px/1.6 var(--ha-font-family-body); -webkit-font-smoothing: antialiased; }
-svg { width: 24px; height: 24px; fill: currentColor; flex: none; }
-header { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; height: var(--header-height);
-  padding: 0 12px; background: var(--sidebar-background-color); color: var(--sidebar-text-color);
-  border-bottom: var(--app-header-border-bottom); }
-header h1 { margin: 0 0 0 12px; font-size: 20px; font-weight: 400; line-height: 32px; }
-header .actions { margin-left: auto; display: flex; align-items: center; }
-header .actions a { display: flex; align-items: center; justify-content: center; width: 48px; height: 48px;
-  border-radius: 50%; color: var(--sidebar-icon-color); }
-header .actions a:hover { background: color-mix(in srgb, var(--primary-text-color) 6%, transparent); }
-main { margin: 0 auto; padding: 16px; max-width: 1040px; }
 section.fetch { margin: 0 auto; padding: 16px 16px 0; max-width: 1040px; }
 section.fetch .card { margin-bottom: 0; }
-.card { background: var(--card-background-color); border-radius: var(--ha-card-border-radius);
-  border: var(--ha-card-border-width) solid var(--ha-card-border-color); box-shadow: var(--ha-card-box-shadow);
-  margin-bottom: 16px; overflow: hidden; }
-.card h2 { margin: 0; padding: 24px 16px 16px; font-size: 24px; font-weight: 400; line-height: 32px; }
-.card .content { padding: 0 16px 16px; }
-.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr)); gap: 0 16px; }
-table { border-collapse: collapse; width: 100%; }
-th, td { text-align: left; padding: 8px 16px 8px 0; vertical-align: top; }
-td { border-top: 1px solid var(--divider-color); }
-th { font-weight: 500; font-size: 12px; white-space: nowrap; }
-table.kv th { width: 45%; font-size: 14px; font-weight: 400; color: var(--secondary-text-color);
-  border-top: 1px solid var(--divider-color); }
-table.kv tr:first-child th, table.kv tr:first-child td { border-top: 0; }
-.list th:first-child, .list td:first-child { padding-left: 16px; }
-.list th { height: 56px; vertical-align: middle; border-bottom: 1px solid var(--divider-color); }
-.list td { height: 52px; vertical-align: middle; font-size: 13px; }
-.list tr:first-child td { border-top: 0; }
-.ok { color: var(--success-color); } .bad { color: var(--error-color); } .busy { color: var(--primary-color); }
-.muted { color: var(--secondary-text-color); } .nowrap { white-space: nowrap; }
-.sub { display: block; font-size: 12px; line-height: 16px; color: var(--secondary-text-color); }
-.scroll { overflow-x: auto; }
-form { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
-input, select, button { font: inherit; color: inherit; background: var(--primary-background-color);
-  border: 1px solid var(--divider-color); border-radius: 4px; padding: 8px 12px; }
-input[type=url] { flex: 1 1 320px; min-width: 0; }
-button { cursor: pointer; }
-button.primary { background: var(--primary-color); color: #fff; border-color: var(--primary-color); font-weight: 500; }
-button.small { padding: 4px 10px; font-size: 12px; }
-a.download { color: var(--primary-color); font-weight: 500; text-decoration: none; }
-#message { margin: 8px 0 0; min-height: 1.6em; }
-#message.bad { color: var(--error-color); }
+#fetch { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px 16px; }
+#fetch .field { margin-top: 0; }
+#fetch .url { flex: 1 1 320px; min-width: 0; }
+#fetch .field input, #fetch .field select { height: 46px; }
+#fetch .button { margin-bottom: 3px; }
+#message { margin: 12px 0 0; min-height: 1.5em; }
+.busy { color: var(--primary-color); }
+a.download { font-weight: var(--ha-font-weight-medium); }
+.list .button { height: 32px; padding: 0 12px; }
+.list td.title { min-width: 180px; word-break: break-word; }
+@media (max-width: 600px) {
+  section.fetch { padding: 8px 8px 0; }
+  /* One block per job: state and button, then title, then result */
+  .list tr:has(th) { display: none; }
+  .list tr { display: grid; grid-template-columns: 1fr auto; align-items: center; padding: 8px 16px;
+    border-top: 1px solid var(--divider-color); }
+  .list tr:nth-child(2) { border-top: 0; }
+  .list td, .list td:first-child { display: block; height: auto; padding: 2px 0; border: 0; }
+  .list td:last-child { grid-column: 2; grid-row: 1; }
+  .list td.title, .list td.result { grid-column: 1 / -1; min-width: 0; }
+  .list td.result .sub, .list td.opt { display: none; }
+}
 """
 # Takes Home Assistant's theme from the page around the ingress frame (same
 # origin) and swaps in a fresh copy of the page every REFRESH seconds
-THEME_VARS = ("primary-background-color", "card-background-color", "primary-text-color", "secondary-text-color",
-              "divider-color", "primary-color", "success-color", "warning-color", "error-color",
+THEME_VARS = ("primary-background-color", "secondary-background-color", "card-background-color",
+              "primary-text-color", "secondary-text-color", "disabled-text-color", "text-primary-color",
+              "divider-color", "primary-color", "success-color", "warning-color", "error-color", "info-color",
               "sidebar-background-color", "sidebar-text-color", "sidebar-icon-color", "app-header-border-bottom",
               "ha-card-border-radius", "ha-card-border-width", "ha-card-border-color", "ha-card-box-shadow",
               "ha-font-family-body", "header-height")
@@ -393,7 +366,7 @@ SCRIPT = """(() => {
   const say = (text, bad) => {
     const m = document.querySelector("#message");
     m.textContent = text;
-    m.className = bad ? "bad" : "muted";
+    m.className = bad ? "error" : "muted";
   };
   document.querySelector("#fetch").addEventListener("submit", async (event) => {
     event.preventDefault();
@@ -434,9 +407,14 @@ SETTINGS_ICON = ("M12,8A4,4 0 0,1 16,12A4,4 0 0,1 12,16A4,4 0 0,1 8,12A4,4 0 0,1
                  "16.5 9.68,17.14 10.87,17.38L11.24,20H12.76L13.13,17.39C14.32,17.14 15.37,16.5 16.14,15.62L18.57,16.66L19.32,"
                  "15.36L17.2,13.81C17.6,12.64 17.6,11.37 17.2,10.2L19.31,8.65L18.56,7.35L16.15,8.39C15.38,7.5 14.32,6.86 "
                  "13.12,6.62L12.75,4H11.25Z")
-STATE_CLASS = {"done": "ok", "failed": "bad", "cancelled": "muted", "queued": "muted"}
+STATE_CLASS = {"done": "ok", "failed": "error", "cancelled": "muted", "queued": "muted"}
 
 esc = html.escape
+
+
+@functools.cache
+def ha_css() -> str:
+    return HA_CSS.read_text()
 
 
 def _size(n: int | None) -> str:
@@ -470,15 +448,19 @@ def _job_row(job: dict, base: str) -> str:
         detail = (f'<a class="download" href="{esc(base)}/jobs/{esc(job["id"])}/file" download>Download</a> '
                   f'<span class="muted">{_size(job["size"])}, {esc(job["content_type"] or "")}</span>')
     elif state == "failed" and job["error"]:
-        detail = f'<span class="bad">{esc(job["error"]["code"])}</span>: {esc(job["error"]["message"])}'
-    action = "Cancel" if state in ("queued", "probing", "downloading", "converting") else "Remove"
-    button = (f'<button class="small" type="button" data-delete="{esc(job["id"])}">{action}</button>'
+        detail = f'<span class="error">{esc(job["error"]["code"])}</span>: {esc(job["error"]["message"])}'
+    running = state in ("queued", "probing", "downloading", "converting")
+    action = "Cancel" if running else "Remove"
+    button = (f'<button class="button{"" if running else " danger"}" type="button" '
+              f'data-delete="{esc(job["id"])}">{action}</button>'
               if state != "cancelled" else "")
-    title = esc(job["title"] or "") or '<span class="muted">(not probed yet)</span>'
+    title = esc(job["title"] or "") or (
+        '<span class="muted">–</span>' if state in ("failed", "cancelled") else '<span class="muted">(not probed yet)</span>')
     return (f'<tr><td class="nowrap"><span class="{cls}">{esc(state)}</span><span class="sub">{esc(job["id"])}</span></td>'
-            f'<td>{title}<span class="sub">{esc(job["url"])}</span></td>'
-            f'<td class="nowrap">{esc(job["kind"])} / {esc(job["format"])}<span class="sub">{_duration(job["duration"])}</span></td>'
-            f'<td>{detail}<span class="sub">{esc(job["created"] or "")}</span></td><td class="nowrap">{button}</td></tr>')
+            f'<td class="title">{title}<span class="sub">{esc(job["url"])}</span></td>'
+            f'<td class="nowrap opt">{esc(job["kind"])} / {esc(job["format"])}<span class="sub">{_duration(job["duration"])}</span></td>'
+            f'<td class="result">{detail}<span class="sub">{esc(job["created"] or "")}</span></td>'
+            f'<td class="nowrap">{button}</td></tr>')
 
 
 def _form() -> str:
@@ -487,9 +469,10 @@ def _form() -> str:
             f'<option value="{kind}/{fmt}"{" selected" if kind == "audio" and fmt == DEFAULT_FORMAT[kind] else ""}>'
             f'{fmt}{" (keep the source format)" if fmt == "best" else ""}</option>' for fmt in formats) + "</optgroup>"
         for label, kind, formats in TARGETS)
-    return ('<form id="fetch"><input type="url" name="url" placeholder="https://…" required autocomplete="off">'
-            f'<select name="target" title="Format">{options}</select>'
-            '<button class="primary" type="submit">Fetch</button></form>'
+    return ('<form id="fetch"><label class="field url"><span>Link</span>'
+            '<input type="url" name="url" placeholder="https://…" required autocomplete="off"></label>'
+            f'<label class="field"><span>Format</span><select name="target">{options}</select></label>'
+            '<button class="button filled" type="submit">Fetch</button></form>'
             '<p id="message" class="muted">Paste a link, pick a format, and download the file from the list below '
             'when the job is done.</p>')
 
@@ -507,10 +490,9 @@ def render(ctx: Context, jobs: list[dict], base: str = "", nonce: str = "") -> s
     runtime = versions.get("js_runtime")
     ffmpeg = versions.get("ffmpeg")
     service = _kv([
-        ("App", esc(ctx.version)),
         ("yt-dlp", esc(versions.get("yt_dlp") or "–")),
-        ("JavaScript runtime", esc(runtime) if runtime else '<span class="bad">none</span>'),
-        ("ffmpeg", esc(ffmpeg) if ffmpeg else '<span class="bad">none</span>'),
+        ("JavaScript runtime", esc(runtime) if runtime else '<span class="error">none</span>'),
+        ("ffmpeg", esc(ffmpeg) if ffmpeg else '<span class="error">none</span>'),
         ("API definition", f'<a class="download" href="{esc(base)}{OPENAPI_PATH}" download="media-fetcher-openapi.yaml">'
                            'openapi.yaml</a>'),
     ])
@@ -524,20 +506,22 @@ def render(ctx: Context, jobs: list[dict], base: str = "", nonce: str = "") -> s
         ("Allow any site", "yes" if s.get("allow_any_site") else "no"),
     ])
     rows = "".join(_job_row(job, base) for job in jobs)
-    table = (f'<div class="scroll"><table class="list"><tr><th>State</th><th>Title</th><th>Kind</th><th>Result</th>'
+    table = (f'<div class="scroll"><table class="list"><tr><th>State</th><th>Title</th><th class="opt">Kind</th><th>Result</th>'
              f'<th></th></tr>{rows}</table></div>') if jobs else '<div class="content"><p class="muted">No jobs.</p></div>'
-    actions = (f'<a href="/config/app/{esc(ctx.slug)}/config" target="_top" title="Settings">'
+    actions = (f'<a class="icon-button" href="/config/app/{esc(ctx.slug)}/config" target="_top" title="Settings">'
                f'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="{SETTINGS_ICON}"/></svg></a>' if ctx.slug else "")
     return ('<!doctype html><html lang="en"><head><meta charset="utf-8">'
             '<meta name="viewport" content="width=device-width, initial-scale=1"><title>Media Fetcher</title>'
-            f'<style nonce="{esc(nonce)}">{STYLE}</style></head><body data-base="{esc(base)}">'
+            f'<style nonce="{esc(nonce)}">{ha_css()}</style><style nonce="{esc(nonce)}">{STYLE}</style>'
+            f'</head><body data-base="{esc(base)}">'
             f'<header><h1>Media Fetcher</h1><div class="actions">{actions}</div></header>'
             f'<section class="fetch"><div class="card"><h2>Fetch</h2>'
             f'<div class="content">{_form()}</div></div></section><main>'
             f'<div class="card"><h2>Jobs</h2>{table}</div>'
             f'<div class="cards"><div class="card"><h2>Service</h2><div class="content">{service}</div></div>'
             f'<div class="card"><h2>Settings</h2><div class="content">{settings}</div></div></div>'
-            f'</main><script nonce="{esc(nonce)}">{SCRIPT}</script></body></html>')
+            f'</main><footer class="version">Media Fetcher {esc(ctx.version)}</footer>'
+            f'<script nonce="{esc(nonce)}">{SCRIPT}</script></body></html>')
 
 
 def ingress_base(request: web.Request) -> str:
