@@ -25,6 +25,8 @@ profile media_fetcher flags=(attach_disconnected,mediate_deleted) {
   network inet stream,
   network inet6 stream,
   network unix,
+  # glibc's name lookup asks the kernel for the interface addresses
+  network netlink raw,
 
   # s6 stops its services; the Supervisor stops the container
   signal (send, receive),
@@ -55,7 +57,9 @@ profile media_fetcher flags=(attach_disconnected,mediate_deleted) {
   /opt/venv/** rm,
   /opt/venv/bin/* rix,
   /usr/share/** r,
+  /usr/local/share/** r,
   /etc/** r,
+  / r,
 
   # ffmpeg and ffprobe convert files that are already downloaded, and Deno
   # solves the JavaScript a site hands to yt-dlp: none of them needs the
@@ -112,6 +116,8 @@ profile media_fetcher flags=(attach_disconnected,mediate_deleted) {
     @{PROC}/cpuinfo r,
     @{PROC}/meminfo r,
     /sys/devices/system/cpu/** r,
+    /sys/devices/system/node/ r,
+    /sys/devices/system/node/** r,
     /sys/fs/cgroup/** r,
     /dev/null rw,
     /dev/urandom r,
