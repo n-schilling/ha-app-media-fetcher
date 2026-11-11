@@ -243,6 +243,39 @@ def test_page_header_has_stamp_refresh_and_settings_in_that_order():
     assert "/config/app/" not in header and 'id="refresh"' in header and "As of 14:05:09" in header
 
 
+def test_language_of_home_assistant():
+    # The cookie of share/ha-app/ha-lang.js decides; the browser's languages only without it
+    from media_fetcher.api import lang_of
+    assert lang_of("a=b; ha_lang=de", "en-US") == "de"
+    assert lang_of("ha_lang=en", "de-DE,de") == "en"
+    assert lang_of("ha_lang=fr", "de-DE,de") == "en"
+    assert lang_of(None, "de-DE,de;q=0.9,en;q=0.8") == "de"
+    assert lang_of("other=1", "fr,en;q=0.5,de;q=0.4") == "en"
+    assert lang_of(None, None) == "en"
+
+
+async def test_page_in_the_language_of_the_cookie(client):
+    page = await (await client.get("/", headers={"Cookie": "ha_lang=de", "Accept-Language": "en"})).text()
+    assert '<html lang="de">' in page and "Keine Aufträge." in page and ">Stand " in page
+    assert 'title="Einstellungen"' in page and "Wird gestartet" in page
+    page = await (await client.get("/", headers={"Cookie": "ha_lang=en", "Accept-Language": "de"})).text()
+    assert '<html lang="en">' in page and "No jobs." in page and ">As of " in page
+    page = await (await client.get("/", headers={"Accept-Language": "de-DE,de;q=0.9"})).text()
+    assert '<html lang="de">' in page
+
+
+def test_both_languages_have_the_same_texts():
+    from media_fetcher.api import TEXT
+    assert TEXT["de"].keys() == TEXT["en"].keys()
+    assert TEXT["de"]["states"].keys() == TEXT["en"]["states"].keys()
+
+
+def test_shared_language_script_first():
+    from media_fetcher.api import HA_LANG_JS, SCRIPT, page_script
+    shared = HA_LANG_JS.read_text()
+    assert "ha_lang" in shared and page_script() == shared + SCRIPT
+
+
 async def test_private_addresses_are_refused_before_a_job_starts(client, scenario):
     for path in ("/api/v1/info", "/api/v1/jobs"):
         resp = await client.post(path, json={"url": "http://nas.lan/Mediasite/Play/1", "kind": "audio"}, headers=bearer())
@@ -421,9 +454,9 @@ def test_file_names_beyond_ascii_have_a_fallback(title, header):
 
 
 def test_the_form_offers_exactly_the_formats_of_the_api():
-    from media_fetcher.api import _form
+    from media_fetcher.api import TEXT, _form
     from media_fetcher.fetcher import KINDS
-    form = _form()
+    form = _form(TEXT["en"])
     for kind, formats in KINDS.items():
         for fmt in formats:
             assert f'value="{kind}/{fmt}"' in form

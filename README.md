@@ -11,7 +11,7 @@ Requires Home Assistant 2026.11 or later.
 
 ## Screenshots
 
-The page looks like Home Assistant's own settings and follows the theme in use. The jobs on these pictures are made up.
+The page looks like Home Assistant's own settings, follows the theme in use and speaks the language of Home Assistant's interface (German or English). The jobs on these pictures are made up.
 
 <img src="docs/screenshots/page.png" alt="The page: a form to fetch a link, the jobs with state, title, format and download link, the versions and settings" width="700">
 
@@ -54,7 +54,7 @@ A client asks what a link holds (`info`) or starts a job; yt-dlp fetches the med
 
 ## Development
 
-The service is a Python package in [`media_fetcher/rootfs/usr/lib/media_fetcher`](media_fetcher/rootfs/usr/lib/media_fetcher): `api.py` (aiohttp, the page), `jobs.py` (threads, files, cleanup), `fetcher.py` (yt-dlp options, limits and error mapping). The page's look comes from the stylesheet shared by these apps, [`ha.css`](media_fetcher/rootfs/usr/local/share/ha-app/ha.css), which stays identical in every app. The tests replace `yt_dlp.YoutubeDL` with a fake and need no network. Set up both Pythons the CI tests with (3.13 is the image's) and run every check:
+The service is a Python package in [`media_fetcher/rootfs/usr/lib/media_fetcher`](media_fetcher/rootfs/usr/lib/media_fetcher): `api.py` (aiohttp, the page), `jobs.py` (threads, files, cleanup), `fetcher.py` (yt-dlp options, limits and error mapping). The page's look comes from the stylesheet shared by these apps, [`ha.css`](media_fetcher/rootfs/usr/local/share/ha-app/ha.css), and its language from the script shared by them, [`ha-lang.js`](media_fetcher/rootfs/usr/local/share/ha-app/ha-lang.js); both stay identical in every app. The tests replace `yt_dlp.YoutubeDL` with a fake and need no network. Set up both Pythons the CI tests with (3.13 is the image's) and run every check:
 
 ```bash
 uv venv -p 3.13 .venv && uv pip install -p .venv --require-hashes -r media_fetcher/requirements.txt && uv pip install -p .venv -r requirements_test.txt
@@ -70,7 +70,7 @@ The packages are pinned with hashes; after changing `media_fetcher/requirements.
 cd media_fetcher && uv pip compile requirements.in --generate-hashes --universal --python-version 3.13 -o requirements.txt
 ```
 
-The Page check (CI job **Page**, and the step "Page" of `scripts/check.sh`) starts the built image with made-up jobs ([`scripts/page/demo.py`](scripts/page/demo.py)) in a throwaway container, puts a stand-in for Home Assistant's ingress proxy in front of it at the proxy's address ([`scripts/page/ingress.py`](scripts/page/ingress.py)) and opens the page in a headless browser: the header (name, stamp, refresh, settings link with `target="_top"` and the slug), the version line, no console errors or content security policy violations, light, dark and phone width, and refresh, the self-update, removing a job and the gear inside Home Assistant's frame. The same script takes the screenshots in `docs/screenshots`:
+The Page check (CI job **Page**, and the step "Page" of `scripts/check.sh`) starts the built image with made-up jobs ([`scripts/page/demo.py`](scripts/page/demo.py)) in a throwaway container, puts a stand-in for Home Assistant's ingress proxy in front of it at the proxy's address ([`scripts/page/ingress.py`](scripts/page/ingress.py)) and opens the page in a headless browser: the header (name, stamp, refresh, settings link with `target="_top"` and the slug), the version line, no console errors or content security policy violations, light, dark and phone width, and refresh, the self-update, removing a job, the gear inside Home Assistant's frame, and that the page follows Home Assistant's language (German, English, French) over the browser's, with one reload. The same script takes the screenshots in `docs/screenshots`:
 
 ```bash
 docker build --build-arg BUILD_VERSION=dev -t media-fetcher:check media_fetcher
@@ -85,7 +85,7 @@ mkdir -p /tmp/mf && echo '{"token": "dev-token", "trust_home_assistant": true, "
 docker run --rm -p 8099:8099 -v /tmp/mf:/data media-fetcher:dev
 ```
 
-Releases: work happens on `dev`, raise `version` in `media_fetcher/config.yaml` and add its section to the changelog; when CI is green there, `dev` goes to `main`, and a green CI run on `main` tags the version from `config.yaml` and publishes a release with its changelog section.
+Releases: work on `dev`, raise `version` in `media_fetcher/config.yaml` and add its section to the changelog. CI runs on `dev` (amd64 and aarch64 each on a runner of its own kind); once it is green, push that commit to `main`. CI does not run again there: the release workflow checks that CI passed for the commit, then tags the version and publishes the release with that section.
 
 ## Support
 

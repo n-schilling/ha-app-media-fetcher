@@ -3,7 +3,7 @@ image with made-up jobs in a throwaway container, opens the page with a
 headless browser the way Home Assistant's ingress does, checks it and takes
 the pictures.
 
-    docker build --build-arg BUILD_VERSION=0.4.0 -t media-fetcher:check media_fetcher
+    docker build --build-arg BUILD_VERSION=0.4.1 -t media-fetcher:check media_fetcher
     uv run --with playwright==1.65.0 python scripts/screenshots.py --image media-fetcher:check
 
 Two containers of the image in a throwaway Docker network with Home
@@ -18,7 +18,10 @@ app's time, refresh, settings link with target="_top" and the slug from the
 host name), the version line as the last element, no console errors, no
 script errors, no content security policy violations, no sideways
 scrolling; and once that refresh reloads, the page updates itself with the
-stamp, a job is removed, and the settings link leaves the ingress frame.
+stamp, a job is removed, and the settings link leaves the ingress frame; and
+that the page takes Home Assistant's language (a stand-in for its frontend
+in German, English and French around the frame) over the browser's,
+reloading once.
 
 The browser is the installed Google Chrome, else Playwright's Chromium
 (`uv run --with playwright==1.65.0 playwright install chromium` once).
@@ -39,7 +42,7 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import Frame, Page, sync_playwright
 
 ROOT = Path(__file__).resolve().parent.parent
 HOSTNAME = "local-media-fetcher"       # the Supervisor's name for the container
@@ -48,6 +51,10 @@ TZ = "Europe/Berlin"                    # the Supervisor hands Home Assistant's 
 SUBNET, GATEWAY = "172.30.32.0/23", "172.30.32.1"
 APP_IP, INGRESS_IP = "172.30.33.10", "172.30.32.2"
 PREFIX = "/api/hassio_ingress/page-check-token"
+TEXT = {  # what the header says, per language
+    "en": {"as_of": "As of", "refresh": "Refresh", "settings": "Settings"},
+    "de": {"as_of": "Stand", "refresh": "Aktualisieren", "settings": "Einstellungen"},
+}
 VARIANTS = (  # name, width, height, colour scheme, screenshot
     ("desktop light", 1100, 900, "light", "page.png"),
     ("desktop dark", 1100, 900, "dark", None),
@@ -135,7 +142,8 @@ def luminance(rgb: str) -> float:
     return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255
 
 
-def check_page(check: Checks, page, name: str, width: int, scheme: str, expected_version: str) -> None:
+def check_header(check: Checks, page: Page | Frame, name: str, width: int, lang: str = "en") -> None:
+    t = TEXT[lang]
     header = page.evaluate("""() => {
       const h = document.querySelector("body > header");
       if (!h) return null;
@@ -158,16 +166,20 @@ def check_page(check: Checks, page, name: str, width: int, scheme: str, expected
     check([a["tag"] for a in acts] == ["span", "a", "a"], f"{name}: actions are stamp, refresh, settings")
     if len(acts) == 3:
         stamp, refresh, settings = acts
-        m = re.fullmatch(r"As of (\d\d:\d\d:\d\d)", stamp["text"] or "")
+        m = re.fullmatch(rf"{t['as_of']} (\d\d:\d\d:\d\d)", stamp["text"] or "")
         check("stamp" in stamp["cls"] and "opt" in stamp["cls"] and m and near(m.group(1)),
               f"{name}: stamp {stamp['text']!r} is the app's time ({TZ}, now {app_time()})")
         check(stamp["visible"] == (width > 600), f"{name}: stamp {'shown' if width > 600 else 'hidden'} at {width} px")
         check(refresh["id"] == "refresh" and refresh["href"] == "" and refresh["role"] == "button"
-              and refresh["title"] == "Refresh" and "icon-button" in refresh["cls"] and refresh["svg"],
+              and refresh["title"] == t["refresh"] and "icon-button" in refresh["cls"] and refresh["svg"],
               f"{name}: refresh button")
         check(settings["href"] == f"/config/app/{SLUG}/config" and settings["target"] == "_top"
-              and settings["title"] == "Settings" and "icon-button" in settings["cls"] and settings["svg"],
+              and settings["title"] == t["settings"] and "icon-button" in settings["cls"] and settings["svg"],
               f"{name}: settings link {settings['href']} target {settings['target']}")
+
+
+def check_page(check: Checks, page, name: str, width: int, scheme: str, expected_version: str) -> None:
+    check_header(check, page, name, width)
     last = page.evaluate("""() => { const e = document.body.lastElementChild;
       return e ? e.tagName.toLowerCase() + "." + e.className + " " + e.textContent : null; }""")
     check(last == f"footer.version Media Fetcher {expected_version}", f"{name}: version line last ({last!r})")
@@ -212,8 +224,9 @@ def run(image: str, out: Path) -> list[str]:
         with sync_playwright() as p:
             browser = p.chromium.launch(channel="chrome" if chrome else None)
             for name, width, height, scheme, shot in VARIANTS:
+                # A browser in English, whatever this machine's language
                 context = browser.new_context(viewport={"width": width, "height": height}, color_scheme=scheme,
-                                              device_scale_factor=2 if width < 600 else 1)
+                                              device_scale_factor=2 if width < 600 else 1, locale="en-US")
                 context.add_init_script(CSP_WATCH)
                 page = context.new_page()
                 errors: list[str] = []
@@ -234,6 +247,7 @@ def run(image: str, out: Path) -> list[str]:
                 context.close()
             interact(check, browser, base)
             frame_check(check, browser, base)
+            language_check(check, browser, base)
             browser.close()
     finally:
         if check.failed:
@@ -248,7 +262,7 @@ def run(image: str, out: Path) -> list[str]:
 
 def interact(check: Checks, browser, base: str) -> None:
     """Refresh reloads; the page updates itself with its stamp; a job goes."""
-    context = browser.new_context(viewport={"width": 1100, "height": 900})
+    context = browser.new_context(viewport={"width": 1100, "height": 900}, locale="en-US")
     context.add_init_script(CSP_WATCH)
     page = context.new_page()
     errors: list[str] = []
@@ -297,6 +311,50 @@ def frame_check(check: Checks, browser, base: str) -> None:
     check(page.url == f"{base}/config/app/{SLUG}/config", f"in the frame the gear opens the settings at the top ({page.url})")
     check(not errors, f"in the frame: no console errors {errors}")
     page.close()
+
+
+def language_check(check: Checks, browser, base: str) -> None:
+    """The browser asks for English; the page follows Home Assistant's
+    language (share/ha-app/ha-lang.js): one reload when it changes, none
+    when not, the cookie for the ingress path only."""
+    context = browser.new_context(viewport={"width": 1100, "height": 900}, locale="en-US",
+                                  extra_http_headers={"Accept-Language": "en"})
+    context.add_init_script(CSP_WATCH)
+    page = context.new_page()
+    errors: list[str] = []
+    page.on("console", lambda m: m.type == "error" and errors.append(m.text))
+    page.on("pageerror", lambda x: errors.append(str(x)))
+    for ha_lang, lang, expected in (("de", "de", 2), ("de", "de", 1), ("en-GB", "en", 2), ("fr", "en", 2),
+                                    ("fr", "en", 1)):
+        where = f"Home Assistant in {ha_lang}"
+        app, loads = in_home_assistant(page, base, ha_lang)
+        shown = app.evaluate("[document.documentElement.lang, getComputedStyle(document.documentElement).visibility]")
+        check(shown == [lang, "visible"], f"{where}: page in {lang} and shown ({shown})")
+        check(loads == expected, f"{where}: loaded {expected} time(s) ({loads})")
+        check_header(check, app, where, 1100, lang)
+        held = [(k["value"], k["path"]) for k in context.cookies() if k["name"] == "ha_lang"]
+        check(held == [(ha_lang.split("-")[0], f"{PREFIX}/")], f"{where}: cookie for the ingress path ({held})")
+    csp_hits = [v for f in page.frames for v in (f.evaluate("window.__csp || []") or [])]
+    check(not errors and not csp_hits, f"language: no console errors, no CSP violations ({errors + csp_hits})")
+    context.close()
+
+
+def in_home_assistant(page: Page, base: str, lang: str) -> tuple[Frame, int]:
+    """Opens the page in a stand-in for Home Assistant's frontend in that
+    language; the app's frame and how often it loaded."""
+    loads: list[str] = []
+
+    def seen(frame: Frame) -> None:
+        if frame.parent_frame is not None and frame.url.startswith(base + PREFIX):
+            loads.append(frame.url)
+
+    page.on("framenavigated", seen)
+    page.goto(f"{base}/?lang={lang}")
+    page.wait_for_timeout(1500)  # room for another reload, which must not come
+    page.remove_listener("framenavigated", seen)
+    app = next(f for f in page.frames if f.parent_frame is not None)
+    app.locator("body > header h1").wait_for()
+    return app, len(loads)
 
 
 def main() -> None:

@@ -304,6 +304,9 @@ async def page_file(request: web.Request) -> web.StreamResponse:
 # Home Assistant's look, the same file in every app (ha.css), then this
 # page's own rules
 HA_CSS = Path(__file__).resolve().parents[2] / "local/share/ha-app/ha.css"
+# Home Assistant's language for the page (cookie ha_lang), shared like the
+# stylesheet; it runs first, in the page's one script
+HA_LANG_JS = HA_CSS.with_name("ha-lang.js")
 STYLE = """
 section.fetch { margin: 0 auto; padding: 16px 16px 0; max-width: 1040px; }
 section.fetch .card { margin-bottom: 0; }
@@ -374,6 +377,8 @@ SCRIPT = """(() => {
     // The form and the buttons talk to the page's own endpoints, under the
     // ingress path the Supervisor tells us
     const base = document.body.dataset.base || "";
+    // The page's own texts in its language, from the server
+    const text = JSON.parse(document.body.dataset.text || "{}");
     const headers = { "Content-Type": "application/json", "X-Requested-With": "media-fetcher" };
     const say = (text, bad) => {
       const m = document.querySelector("#message");
@@ -384,15 +389,15 @@ SCRIPT = """(() => {
       event.preventDefault();
       const form = event.target, [kind, format] = form.target.value.split("/");
       const body = { url: form.url.value.trim(), kind, format };
-      say("Starting …");
+      say(text.starting);
       try {
         const resp = await fetch(base + "/jobs", { method: "POST", headers, body: JSON.stringify(body) });
         const data = await resp.json();
         if (!resp.ok) { say((data.error && data.error.message) || resp.statusText, true); return; }
-        say("Job " + data.id + " started; the download link appears below when it is done.");
+        say(text.started.replace("ID", data.id));
         form.url.value = "";
         update();
-      } catch (e) { say("The request failed: " + e, true); }
+      } catch (e) { say(text.failed + e, true); }
     });
     document.addEventListener("click", async (event) => {
       if (event.target.closest("#refresh")) { event.preventDefault(); location.reload(); return; }
@@ -402,7 +407,7 @@ SCRIPT = """(() => {
       try {
         const resp = await fetch(base + "/jobs/" + button.dataset.delete, { method: "DELETE", headers });
         if (!resp.ok) { const data = await resp.json(); say((data.error && data.error.message) || resp.statusText, true); }
-      } catch (e) { say("The request failed: " + e, true); }
+      } catch (e) { say(text.failed + e, true); }
       update();
     });
   });
@@ -434,6 +439,71 @@ def ha_css() -> str:
     return HA_CSS.read_text()
 
 
+@functools.cache
+def page_script() -> str:
+    """ha-lang.js first, then the page's own code: one script."""
+    return HA_LANG_JS.read_text() + SCRIPT
+
+
+# The page's texts; German for Home Assistant in German, else English
+TEXT = {
+    "en": {
+        "as_of": "As of", "refresh": "Refresh", "settings": "Settings", "fetch": "Fetch", "jobs": "Jobs",
+        "service": "Service", "link": "Link", "format": "Format", "keep": " (keep the source format)",
+        "hint": "Paste a link, pick a format, and download the file from the list below when the job is done.",
+        "starting": "Starting …", "started": "Job ID started; the download link appears below when it is done.",
+        "failed": "The request failed: ", "no_jobs": "No jobs.", "state": "State", "title": "Title",
+        "kind": "Kind", "result": "Result", "of": "of", "download": "Download", "cancel": "Cancel",
+        "remove": "Remove", "not_probed": "(not probed yet)", "runtime": "JavaScript runtime", "none": "none",
+        "api_definition": "API definition", "api_token": "API token",
+        "token_others": "from the options, for clients other than Home Assistant",
+        "token_all": "from the options, for every client", "token_ha_only": "none: Home Assistant only",
+        "token_nobody": "none: nobody gets in", "trust": "Trust Home Assistant", "yes": "yes", "no": "no",
+        "max_jobs": "Concurrent jobs", "keep_minutes": "Keep finished jobs", "max_size": "Largest file",
+        "any_site": "Allow any site",
+        "states": {"queued": "queued", "probing": "probing", "downloading": "downloading",
+                   "converting": "converting", "done": "done", "failed": "failed", "cancelled": "cancelled"},
+    },
+    "de": {
+        "as_of": "Stand", "refresh": "Aktualisieren", "settings": "Einstellungen", "fetch": "Abrufen",
+        "jobs": "Aufträge", "service": "Dienst", "link": "Link", "format": "Format",
+        "keep": " (Format der Quelle behalten)",
+        "hint": "Link einfügen, Format wählen und die Datei unten aus der Liste laden, sobald der Auftrag fertig ist.",
+        "starting": "Wird gestartet …",
+        "started": "Auftrag ID gestartet; der Download-Link erscheint unten, sobald er fertig ist.",
+        "failed": "Die Anfrage ist fehlgeschlagen: ", "no_jobs": "Keine Aufträge.", "state": "Status",
+        "title": "Titel", "kind": "Art", "result": "Ergebnis", "of": "von", "download": "Herunterladen",
+        "cancel": "Abbrechen", "remove": "Entfernen", "not_probed": "(noch nicht geprüft)",
+        "runtime": "JavaScript-Laufzeit", "none": "keine", "api_definition": "API-Beschreibung",
+        "api_token": "API-Token", "token_others": "aus den Optionen, für andere Clients als Home Assistant",
+        "token_all": "aus den Optionen, für jeden Client", "token_ha_only": "keines: nur Home Assistant",
+        "token_nobody": "keines: niemand kommt herein", "trust": "Home Assistant vertrauen", "yes": "ja",
+        "no": "nein", "max_jobs": "Gleichzeitige Aufträge", "keep_minutes": "Fertige Aufträge behalten",
+        "max_size": "Größte Datei", "any_site": "Jede Seite erlauben",
+        "states": {"queued": "wartet", "probing": "prüft", "downloading": "lädt", "converting": "wandelt um",
+                   "done": "fertig", "failed": "fehlgeschlagen", "cancelled": "abgebrochen"},
+    },
+}
+
+
+def lang_of(cookie: str | None, accept: str | None = None) -> str:
+    """German or English, as Home Assistant's interface shows it.
+
+    The page script keeps Home Assistant's language in the cookie ha_lang
+    (share/ha-app/ha-lang.js): German for "de", English for everything else.
+    Only without that cookie, German if the browser puts German before English.
+    """
+    for part in (cookie or "").split(";"):
+        name, _, value = part.strip().partition("=")
+        if name == "ha_lang":
+            return "de" if value.strip().lower() == "de" else "en"
+    for part in (accept or "").split(","):
+        code = part.split(";")[0].strip().lower()
+        if code.startswith(("de", "en")):
+            return code[:2]
+    return "en"
+
+
 def _size(n: int | None) -> str:
     if n is None:
         return "–"
@@ -454,44 +524,43 @@ def _kv(rows: list[tuple[str, str]]) -> str:
     return '<table class="kv">' + "".join(f"<tr><th>{esc(k)}</th><td>{v}</td></tr>" for k, v in rows) + "</table>"
 
 
-def _job_row(job: dict, base: str) -> str:
+def _job_row(job: dict, base: str, t: dict) -> str:
     state = job["state"]
     cls = STATE_CLASS.get(state, "busy")
     detail = ""
     if state == "downloading":
-        detail = (f"{_size(job['done_bytes'])} of {_size(job['total_bytes'])}" if job["total_bytes"]
+        detail = (f"{_size(job['done_bytes'])} {t['of']} {_size(job['total_bytes'])}" if job["total_bytes"]
                   else _size(job["done_bytes"]))
     elif state == "done":
-        detail = (f'<a class="download" href="{esc(base)}/jobs/{esc(job["id"])}/file" download>Download</a> '
+        detail = (f'<a class="download" href="{esc(base)}/jobs/{esc(job["id"])}/file" download>{t["download"]}</a> '
                   f'<span class="muted">{_size(job["size"])}, {esc(job["content_type"] or "")}</span>')
     elif state == "failed" and job["error"]:
         detail = f'<span class="error">{esc(job["error"]["code"])}</span>: {esc(job["error"]["message"])}'
     running = state in ("queued", "probing", "downloading", "converting")
-    action = "Cancel" if running else "Remove"
+    action = t["cancel"] if running else t["remove"]
     button = (f'<button class="button{"" if running else " danger"}" type="button" '
               f'data-delete="{esc(job["id"])}">{action}</button>'
               if state != "cancelled" else "")
     title = esc(job["title"] or "") or (
-        '<span class="muted">–</span>' if state in ("failed", "cancelled") else '<span class="muted">(not probed yet)</span>')
-    return (f'<tr><td class="nowrap"><span class="{cls}">{esc(state)}</span><span class="sub">{esc(job["id"])}</span></td>'
+        '<span class="muted">–</span>' if state in ("failed", "cancelled") else f'<span class="muted">{t["not_probed"]}</span>')
+    return (f'<tr><td class="nowrap"><span class="{cls}">{esc(t["states"].get(state, state))}</span><span class="sub">{esc(job["id"])}</span></td>'
             f'<td class="title">{title}<span class="sub">{esc(job["url"])}</span></td>'
             f'<td class="nowrap opt">{esc(job["kind"])} / {esc(job["format"])}<span class="sub">{_duration(job["duration"])}</span></td>'
             f'<td class="result">{detail}<span class="sub">{esc(job["created"] or "")}</span></td>'
             f'<td class="nowrap">{button}</td></tr>')
 
 
-def _form() -> str:
+def _form(t: dict) -> str:
     options = "".join(
         f'<optgroup label="{label}">' + "".join(
             f'<option value="{kind}/{fmt}"{" selected" if kind == "audio" and fmt == DEFAULT_FORMAT[kind] else ""}>'
-            f'{fmt}{" (keep the source format)" if fmt == "best" else ""}</option>' for fmt in formats) + "</optgroup>"
+            f'{fmt}{t["keep"] if fmt == "best" else ""}</option>' for fmt in formats) + "</optgroup>"
         for label, kind, formats in TARGETS)
-    return ('<form id="fetch"><label class="field url"><span>Link</span>'
+    return (f'<form id="fetch"><label class="field url"><span>{t["link"]}</span>'
             '<input type="url" name="url" placeholder="https://…" required autocomplete="off"></label>'
-            f'<label class="field"><span>Format</span><select name="target">{options}</select></label>'
-            '<button class="button filled" type="submit">Fetch</button></form>'
-            '<p id="message" class="muted">Paste a link, pick a format, and download the file from the list below '
-            'when the job is done.</p>')
+            f'<label class="field"><span>{t["format"]}</span><select name="target">{options}</select></label>'
+            f'<button class="button filled" type="submit">{t["fetch"]}</button></form>'
+            f'<p id="message" class="muted">{t["hint"]}</p>')
 
 
 def csp(nonce: str) -> str:
@@ -506,54 +575,60 @@ def _icon(path: str) -> str:
     return f'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="{path}"/></svg>'
 
 
-def header_actions(slug: str | None, now: float) -> str:
+def header_actions(slug: str | None, now: float, lang: str = "en") -> str:
     """The header every app page of this author has: when the data were
     read (the app's local time), reload, and Home Assistant's settings page
     of the app outside the ingress frame (left out without a slug)."""
-    actions = f'<span class="stamp opt">As of {time.strftime("%H:%M:%S", time.localtime(now))}</span>'
-    actions += f'<a class="icon-button" id="refresh" href="" role="button" title="Refresh">{_icon(REFRESH_ICON)}</a>'
+    t = TEXT[lang]
+    actions = f'<span class="stamp opt">{t["as_of"]} {time.strftime("%H:%M:%S", time.localtime(now))}</span>'
+    actions += (f'<a class="icon-button" id="refresh" href="" role="button" title="{t["refresh"]}">'
+                f'{_icon(REFRESH_ICON)}</a>')
     if slug:
-        actions += (f'<a class="icon-button" href="/config/app/{esc(slug)}/config" target="_top" title="Settings">'
-                    f'{_icon(SETTINGS_ICON)}</a>')
+        actions += (f'<a class="icon-button" href="/config/app/{esc(slug)}/config" target="_top" '
+                    f'title="{t["settings"]}">{_icon(SETTINGS_ICON)}</a>')
     return actions
 
 
-def render(ctx: Context, jobs: list[dict], base: str = "", nonce: str = "", now: float | None = None) -> str:
+def render(ctx: Context, jobs: list[dict], base: str = "", nonce: str = "", now: float | None = None,
+           lang: str = "en") -> str:
+    t = TEXT[lang]
     versions = ctx.versions
     runtime = versions.get("js_runtime")
     ffmpeg = versions.get("ffmpeg")
     service = _kv([
         ("yt-dlp", esc(versions.get("yt_dlp") or "–")),
-        ("JavaScript runtime", esc(runtime) if runtime else '<span class="error">none</span>'),
-        ("ffmpeg", esc(ffmpeg) if ffmpeg else '<span class="error">none</span>'),
-        ("API definition", f'<a class="download" href="{esc(base)}{OPENAPI_PATH}" download="media-fetcher-openapi.yaml">'
+        (t["runtime"], esc(runtime) if runtime else f'<span class="error">{t["none"]}</span>'),
+        ("ffmpeg", esc(ffmpeg) if ffmpeg else f'<span class="error">{t["none"]}</span>'),
+        (t["api_definition"], f'<a class="download" href="{esc(base)}{OPENAPI_PATH}" download="media-fetcher-openapi.yaml">'
                            'openapi.yaml</a>'),
     ])
     s = ctx.settings
     settings = _kv([
-        ("API token", ("from the options, for clients other than Home Assistant" if s.get("trust_home_assistant", True)
-                       else "from the options, for every client") if s.get("token_set")
-         else "none: Home Assistant only" if s.get("trust_home_assistant", True) else "none: nobody gets in"),
-        ("Trust Home Assistant", "yes" if s.get("trust_home_assistant", True) else "no"),
-        ("Concurrent jobs", esc(str(s.get("max_jobs", "–")))),
-        ("Keep finished jobs", f"{esc(str(s.get('keep_minutes', '–')))} min"),
-        ("Largest file", f"{esc(str(s.get('max_size_mb', '–')))} MB"),
-        ("Allow any site", "yes" if s.get("allow_any_site") else "no"),
+        (t["api_token"], (t["token_others"] if s.get("trust_home_assistant", True) else t["token_all"])
+         if s.get("token_set") else t["token_ha_only"] if s.get("trust_home_assistant", True) else t["token_nobody"]),
+        (t["trust"], t["yes"] if s.get("trust_home_assistant", True) else t["no"]),
+        (t["max_jobs"], esc(str(s.get("max_jobs", "–")))),
+        (t["keep_minutes"], f"{esc(str(s.get('keep_minutes', '–')))} min"),
+        (t["max_size"], f"{esc(str(s.get('max_size_mb', '–')))} MB"),
+        (t["any_site"], t["yes"] if s.get("allow_any_site") else t["no"]),
     ])
-    rows = "".join(_job_row(job, base) for job in jobs)
-    table = (f'<div class="scroll"><table class="list"><tr><th>State</th><th>Title</th><th class="opt">Kind</th><th>Result</th>'
-             f'<th></th></tr>{rows}</table></div>') if jobs else '<div class="content"><p class="muted">No jobs.</p></div>'
-    actions = header_actions(ctx.slug, time.time() if now is None else now)
-    return ('<!doctype html><html lang="en"><head><meta charset="utf-8">'
+    rows = "".join(_job_row(job, base, t) for job in jobs)
+    table = (f'<div class="scroll"><table class="list"><tr><th>{t["state"]}</th><th>{t["title"]}</th>'
+             f'<th class="opt">{t["kind"]}</th><th>{t["result"]}</th><th></th></tr>{rows}</table></div>'
+             if jobs else f'<div class="content"><p class="muted">{t["no_jobs"]}</p></div>')
+    actions = header_actions(ctx.slug, time.time() if now is None else now, lang)
+    say = json.dumps({k: t[k] for k in ("starting", "started", "failed")}, ensure_ascii=False)
+    return (f'<!doctype html><html lang="{lang}"><head><meta charset="utf-8">'
             '<meta name="viewport" content="width=device-width, initial-scale=1"><title>Media Fetcher</title>'
             f'<style nonce="{esc(nonce)}">{ha_css()}</style><style nonce="{esc(nonce)}">{STYLE}</style>'
-            f'<script nonce="{esc(nonce)}">{SCRIPT}</script></head><body data-base="{esc(base)}">'
+            f'<script nonce="{esc(nonce)}">{page_script()}</script></head>'
+            f'<body data-base="{esc(base)}" data-text="{esc(say)}">'
             f'<header><h1>Media Fetcher</h1><div class="actions">{actions}</div></header>'
-            f'<section class="fetch"><div class="card"><h2>Fetch</h2>'
-            f'<div class="content">{_form()}</div></div></section><main>'
-            f'<div class="card"><h2>Jobs</h2>{table}</div>'
-            f'<div class="cards"><div class="card"><h2>Service</h2><div class="content">{service}</div></div>'
-            f'<div class="card"><h2>Settings</h2><div class="content">{settings}</div></div></div>'
+            f'<section class="fetch"><div class="card"><h2>{t["fetch"]}</h2>'
+            f'<div class="content">{_form(t)}</div></div></section><main>'
+            f'<div class="card"><h2>{t["jobs"]}</h2>{table}</div>'
+            f'<div class="cards"><div class="card"><h2>{t["service"]}</h2><div class="content">{service}</div></div>'
+            f'<div class="card"><h2>{t["settings"]}</h2><div class="content">{settings}</div></div></div>'
             f'</main><footer class="version">Media Fetcher {esc(ctx.version)}</footer></body></html>')
 
 
@@ -569,7 +644,8 @@ async def status_page(request: web.Request) -> web.Response:
     if request.remote not in ctx.page_peers:
         return web.Response(status=403, text="only through Home Assistant")
     nonce = secrets.token_urlsafe(16)
-    return web.Response(text=render(ctx, ctx.manager.snapshots(), ingress_base(request), nonce),
+    lang = lang_of(request.headers.get("Cookie"), request.headers.get("Accept-Language"))
+    return web.Response(text=render(ctx, ctx.manager.snapshots(), ingress_base(request), nonce, lang=lang),
                         content_type="text/html",
                         headers={"Cache-Control": "no-store", "Content-Security-Policy": csp(nonce)})
 

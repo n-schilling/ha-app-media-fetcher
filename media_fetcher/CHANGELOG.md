@@ -2,6 +2,13 @@
 
 All notable changes to this app are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the app uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.1] - 2026-11-11
+
+### Changed
+
+- The page speaks the language of Home Assistant's interface, German or English, no longer English only: it reads the user's language from Home Assistant around its frame, keeps it in a cookie for the app's ingress path and reloads once when it changes. Without that cookie it follows the browser
+- CI builds and tests aarch64 natively on an arm64 runner instead of emulating it, the AppArmor test included, and no longer runs a second time on `main`: the release workflow starts on the push to `main` and checks that CI passed for that commit before it tags
+
 ## [0.4.0] - 2026-11-11
 
 ### Added
