@@ -1,5 +1,5 @@
 name: Media Fetcher
-version: "0.3.0"
+version: "0.3.1"
 slug: media_fetcher
 description: Fetches audio or video from links that yt-dlp understands, with a JavaScript runtime and ffmpeg, as a small HTTP service for integrations and automations
 url: https://github.com/n-schilling/ha-app-media-fetcher
