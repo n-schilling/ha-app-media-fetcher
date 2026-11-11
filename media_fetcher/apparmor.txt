@@ -7,8 +7,7 @@ abi <abi/3.0>,
 
 # Fetches media from the internet with yt-dlp, Deno and ffmpeg and writes
 # only its job files to /data. s6-overlay runs as root and hands /data to
-# user fetcher, as which the service runs. Measured on Home Assistant OS in
-# complain mode before it enforced.
+# user fetcher, as which the service runs. Tested on a real installation.
 profile media_fetcher flags=(attach_disconnected,mediate_deleted) {
   #include <abstractions/base>
 

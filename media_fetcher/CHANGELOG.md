@@ -7,7 +7,7 @@ All notable changes to this app are documented here. The format follows [Keep a 
 ### Security
 
 - The service no longer runs as root, but as a user of its own, to which the app hands its data folder on start
-- A narrower AppArmor profile: only the capabilities, networks, programs and paths the app uses, measured on Home Assistant OS before it was enforced; ffmpeg, ffprobe and Deno keep running without network
+- A narrower AppArmor profile: only the capabilities, networks, programs and paths the app uses, tested on a real installation; ffmpeg, ffprobe and Deno keep running without network
 
 ## [0.3.0] - 2026-11-10
 
