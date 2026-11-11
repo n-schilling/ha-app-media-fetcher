@@ -30,7 +30,8 @@ Under **Settings → Apps → Media Fetcher → Configuration**.
 
 - **Fetch:** paste a link, pick a format (audio m4a, mp3, opus, flac, wav or the source's own format; video mp4, mkv or the source's own container) and press *Fetch*. The job appears in the list below; when it is done, its row has a **Download** link that saves the file under the media's title.
 - **Jobs:** every job with its state, progress or result, and a *Cancel* or *Remove* button. The list refreshes every 10 seconds; jobs started through the API are there too. On a phone each job is one block.
-- **Service and Settings:** the versions of yt-dlp, the JavaScript runtime and ffmpeg, a link to download the API definition (`openapi.yaml`), and the options in use. The gear at the top opens the app's options.
+- **Header:** the time the page's data were read (*As of …*, the app's time; hidden on a phone), a button that reloads the page, and the gear that opens the app's options in Home Assistant, like the pages of the author's other apps.
+- **Service and Settings:** the versions of yt-dlp, the JavaScript runtime and ffmpeg, a link to download the API definition (`openapi.yaml`), and the options in use.
 - The app's name and version stand at the bottom of the page.
 
 The page talks to endpoints of its own that take no token; the ingress session is their lock, and the ones that change something take JSON with an `X-Requested-With` header only, which a form on another site cannot send.

@@ -24,6 +24,7 @@ import html
 import json
 import re
 import secrets
+import time
 import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -338,6 +339,8 @@ THEME_VARS = ("primary-background-color", "secondary-background-color", "card-ba
               "ha-card-border-radius", "ha-card-border-width", "ha-card-border-color", "ha-card-box-shadow",
               "ha-font-family-body", "header-height")
 REFRESH = 10
+# In the head, so the version line stays the last element of the body; the
+# rest waits for the document
 SCRIPT = """(() => {
   try {
     const outer = window.parent.document.documentElement;
@@ -352,50 +355,62 @@ SCRIPT = """(() => {
       new MutationObserver(take).observe(outer, { attributes: true, attributeFilter: ["style", "class"] });
     }
   } catch (e) {}
-  const update = async () => {
-    try {
-      const page = await fetch(location.href, { cache: "no-store" });
-      if (!page.ok) return;
-      const doc = new DOMParser().parseFromString(await page.text(), "text/html");
-      document.querySelector("main").replaceWith(doc.querySelector("main"));
-    } catch (e) {}
-  };
-  setInterval(update, REFRESH * 1000);
-  // The form and the buttons talk to the page's own endpoints, under the
-  // ingress path the Supervisor tells us
-  const base = document.body.dataset.base || "";
-  const headers = { "Content-Type": "application/json", "X-Requested-With": "media-fetcher" };
-  const say = (text, bad) => {
-    const m = document.querySelector("#message");
-    m.textContent = text;
-    m.className = bad ? "error" : "muted";
-  };
-  document.querySelector("#fetch").addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const form = event.target, [kind, format] = form.target.value.split("/");
-    const body = { url: form.url.value.trim(), kind, format };
-    say("Starting …");
-    try {
-      const resp = await fetch(base + "/jobs", { method: "POST", headers, body: JSON.stringify(body) });
-      const data = await resp.json();
-      if (!resp.ok) { say((data.error && data.error.message) || resp.statusText, true); return; }
-      say("Job " + data.id + " started; the download link appears below when it is done.");
-      form.url.value = "";
+  document.addEventListener("DOMContentLoaded", () => {
+    const update = async () => {
+      try {
+        const page = await fetch(location.href, { cache: "no-store" });
+        if (!page.ok) return;
+        // The body only: parsing the head's styles, whose nonce belongs to
+        // the other response, would report a CSP violation each time
+        const text = await page.text();
+        const doc = new DOMParser().parseFromString(text.slice(text.indexOf("<body")), "text/html");
+        document.querySelector("main").replaceWith(doc.querySelector("main"));
+        // The stamp in the header says when the data were read
+        const stamp = doc.querySelector("header .stamp"), own = document.querySelector("header .stamp");
+        if (stamp && own) own.textContent = stamp.textContent;
+      } catch (e) {}
+    };
+    setInterval(update, REFRESH * 1000);
+    // The form and the buttons talk to the page's own endpoints, under the
+    // ingress path the Supervisor tells us
+    const base = document.body.dataset.base || "";
+    const headers = { "Content-Type": "application/json", "X-Requested-With": "media-fetcher" };
+    const say = (text, bad) => {
+      const m = document.querySelector("#message");
+      m.textContent = text;
+      m.className = bad ? "error" : "muted";
+    };
+    document.querySelector("#fetch").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const form = event.target, [kind, format] = form.target.value.split("/");
+      const body = { url: form.url.value.trim(), kind, format };
+      say("Starting …");
+      try {
+        const resp = await fetch(base + "/jobs", { method: "POST", headers, body: JSON.stringify(body) });
+        const data = await resp.json();
+        if (!resp.ok) { say((data.error && data.error.message) || resp.statusText, true); return; }
+        say("Job " + data.id + " started; the download link appears below when it is done.");
+        form.url.value = "";
+        update();
+      } catch (e) { say("The request failed: " + e, true); }
+    });
+    document.addEventListener("click", async (event) => {
+      if (event.target.closest("#refresh")) { event.preventDefault(); location.reload(); return; }
+      const button = event.target.closest("button[data-delete]");
+      if (!button) return;
+      button.disabled = true;
+      try {
+        const resp = await fetch(base + "/jobs/" + button.dataset.delete, { method: "DELETE", headers });
+        if (!resp.ok) { const data = await resp.json(); say((data.error && data.error.message) || resp.statusText, true); }
+      } catch (e) { say("The request failed: " + e, true); }
       update();
-    } catch (e) { say("The request failed: " + e, true); }
-  });
-  document.addEventListener("click", async (event) => {
-    const button = event.target.closest("button[data-delete]");
-    if (!button) return;
-    button.disabled = true;
-    try {
-      const resp = await fetch(base + "/jobs/" + button.dataset.delete, { method: "DELETE", headers });
-      if (!resp.ok) { const data = await resp.json(); say((data.error && data.error.message) || resp.statusText, true); }
-    } catch (e) { say("The request failed: " + e, true); }
-    update();
+    });
   });
 })();""".replace("NAMES", json.dumps(THEME_VARS)).replace("REFRESH", str(REFRESH))
 TARGETS = (("Audio", "audio", KINDS["audio"]), ("Video", "video", KINDS["video"]))
+# Material Design Icons (Apache 2.0), as Home Assistant draws them
+REFRESH_ICON = ("M17.65,6.35C16.2,4.9 14.21,4 12,4A8,8 0 0,0 4,12A8,8 0 0,0 12,20C15.73,20 18.84,17.45 19.73,14H17.65C16.83,"
+                "16.33 14.61,18 12,18A6,6 0 0,1 6,12A6,6 0 0,1 12,6C13.66,6 15.14,6.69 16.22,7.78L13,11H20V4L17.65,6.35Z")
 SETTINGS_ICON = ("M12,8A4,4 0 0,1 16,12A4,4 0 0,1 12,16A4,4 0 0,1 8,12A4,4 0 0,1 12,8M12,10A2,2 0 0,0 10,12A2,2 0 0,0 "
                  "12,14A2,2 0 0,0 14,12A2,2 0 0,0 12,10M10,22C9.75,22 9.54,21.82 9.5,21.58L9.13,18.93C8.5,18.68 "
                  "7.96,18.34 7.44,17.94L4.95,18.95C4.73,19.03 4.46,18.95 4.34,18.73L2.34,15.27C2.21,15.05 2.27,14.78 "
@@ -487,7 +502,23 @@ def csp(nonce: str) -> str:
             "frame-ancestors 'self'")
 
 
-def render(ctx: Context, jobs: list[dict], base: str = "", nonce: str = "") -> str:
+def _icon(path: str) -> str:
+    return f'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="{path}"/></svg>'
+
+
+def header_actions(slug: str | None, now: float) -> str:
+    """The header every app page of this author has: when the data were
+    read (the app's local time), reload, and Home Assistant's settings page
+    of the app outside the ingress frame (left out without a slug)."""
+    actions = f'<span class="stamp opt">As of {time.strftime("%H:%M:%S", time.localtime(now))}</span>'
+    actions += f'<a class="icon-button" id="refresh" href="" role="button" title="Refresh">{_icon(REFRESH_ICON)}</a>'
+    if slug:
+        actions += (f'<a class="icon-button" href="/config/app/{esc(slug)}/config" target="_top" title="Settings">'
+                    f'{_icon(SETTINGS_ICON)}</a>')
+    return actions
+
+
+def render(ctx: Context, jobs: list[dict], base: str = "", nonce: str = "", now: float | None = None) -> str:
     versions = ctx.versions
     runtime = versions.get("js_runtime")
     ffmpeg = versions.get("ffmpeg")
@@ -512,20 +543,18 @@ def render(ctx: Context, jobs: list[dict], base: str = "", nonce: str = "") -> s
     rows = "".join(_job_row(job, base) for job in jobs)
     table = (f'<div class="scroll"><table class="list"><tr><th>State</th><th>Title</th><th class="opt">Kind</th><th>Result</th>'
              f'<th></th></tr>{rows}</table></div>') if jobs else '<div class="content"><p class="muted">No jobs.</p></div>'
-    actions = (f'<a class="icon-button" href="/config/app/{esc(ctx.slug)}/config" target="_top" title="Settings">'
-               f'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="{SETTINGS_ICON}"/></svg></a>' if ctx.slug else "")
+    actions = header_actions(ctx.slug, time.time() if now is None else now)
     return ('<!doctype html><html lang="en"><head><meta charset="utf-8">'
             '<meta name="viewport" content="width=device-width, initial-scale=1"><title>Media Fetcher</title>'
             f'<style nonce="{esc(nonce)}">{ha_css()}</style><style nonce="{esc(nonce)}">{STYLE}</style>'
-            f'</head><body data-base="{esc(base)}">'
+            f'<script nonce="{esc(nonce)}">{SCRIPT}</script></head><body data-base="{esc(base)}">'
             f'<header><h1>Media Fetcher</h1><div class="actions">{actions}</div></header>'
             f'<section class="fetch"><div class="card"><h2>Fetch</h2>'
             f'<div class="content">{_form()}</div></div></section><main>'
             f'<div class="card"><h2>Jobs</h2>{table}</div>'
             f'<div class="cards"><div class="card"><h2>Service</h2><div class="content">{service}</div></div>'
             f'<div class="card"><h2>Settings</h2><div class="content">{settings}</div></div></div>'
-            f'</main><footer class="version">Media Fetcher {esc(ctx.version)}</footer>'
-            f'<script nonce="{esc(nonce)}">{SCRIPT}</script></body></html>')
+            f'</main><footer class="version">Media Fetcher {esc(ctx.version)}</footer></body></html>')
 
 
 def ingress_base(request: web.Request) -> str:

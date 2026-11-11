@@ -62,7 +62,7 @@ uv venv -p 3.14 .venv-314 && uv pip install -p .venv-314 --require-hashes -r med
 scripts/check.sh
 ```
 
-`scripts/check.sh` runs what CI runs: changelog, shellcheck, ruff, the tests with coverage on both Pythons and, with Docker, the image build with its start checks (`--no-image` skips them). The app linter and the AppArmor test (`tests/apparmor.sh`, which needs a kernel with AppArmor) run in CI only.
+`scripts/check.sh` runs what CI runs: changelog, shellcheck, ruff, the tests with coverage on both Pythons and, with Docker, the image build with its start checks and the Page check (`--no-image` skips them). The app linter and the AppArmor test (`tests/apparmor.sh`, which needs a kernel with AppArmor) run in CI only.
 
 The packages are pinned with hashes; after changing `media_fetcher/requirements.in`:
 
@@ -70,10 +70,11 @@ The packages are pinned with hashes; after changing `media_fetcher/requirements.
 cd media_fetcher && uv pip compile requirements.in --generate-hashes --universal --python-version 3.13 -o requirements.txt
 ```
 
-The screenshots come from the page's own code with made-up jobs, in a headless browser:
+The Page check (CI job **Page**, and the step "Page" of `scripts/check.sh`) starts the built image with made-up jobs ([`scripts/page/demo.py`](scripts/page/demo.py)) in a throwaway container, puts a stand-in for Home Assistant's ingress proxy in front of it at the proxy's address ([`scripts/page/ingress.py`](scripts/page/ingress.py)) and opens the page in a headless browser: the header (name, stamp, refresh, settings link with `target="_top"` and the slug), the version line, no console errors or content security policy violations, light, dark and phone width, and refresh, the self-update, removing a job and the gear inside Home Assistant's frame. The same script takes the screenshots in `docs/screenshots`:
 
 ```bash
-uv run --with playwright==1.65.0 --with-requirements media_fetcher/requirements.in python scripts/screenshots.py
+docker build --build-arg BUILD_VERSION=dev -t media-fetcher:check media_fetcher
+uv run --with playwright==1.65.0 python scripts/screenshots.py --image media-fetcher:check
 ```
 
 A local image for a real run, with a fixed token:

@@ -121,3 +121,35 @@ jobs:
         run: |
           sudo apparmor_parser -r -W media_fetcher/apparmor.txt
           tests/apparmor.sh media-fetcher:test || { sudo dmesg | grep -i apparmor | tail -n 20; exit 1; }
+
+  page:
+    name: Page
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.14"
+      - name: Build (amd64)
+        run: |
+          version=$(yq -r '.version' media_fetcher/config.yaml)
+          docker build --build-arg "BUILD_VERSION=${version}" -t media-fetcher:check media_fetcher
+      - name: Playwright
+        run: |
+          python -m venv .venv-page
+          .venv-page/bin/pip install playwright==1.65.0
+          .venv-page/bin/playwright install --with-deps chromium
+      - name: Page through ingress, light, dark and phone width
+        # The image with made-up jobs in a throwaway container, behind a
+        # stand-in for the ingress proxy at its address; see the script
+        run: .venv-page/bin/python scripts/screenshots.py --image media-fetcher:check --out page-screenshots
+      - name: Screenshots
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: page-screenshots
+          path: page-screenshots
+          if-no-files-found: ignore

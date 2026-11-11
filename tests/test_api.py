@@ -219,6 +219,30 @@ async def test_status_page_without_jobs(client):
     assert "No jobs." in page and "from the options" in page and "Home Assistant only" not in page
 
 
+def test_page_header_has_stamp_refresh_and_settings_in_that_order():
+    import re
+    import time
+
+    from media_fetcher.api import Context, render
+
+    now = time.mktime((2026, 11, 11, 14, 5, 9, 0, 0, -1))
+    ctx = Context(manager=None, token="", versions={}, version="1.0.0", page_peers=frozenset(),
+                  core_peers=frozenset(), slug="local_media_fetcher")
+    page = render(ctx, [], now=now)
+    header = re.search(r"<header>(.*?)</header>", page).group(1)
+    assert header.startswith("<h1>Media Fetcher</h1><div class=\"actions\">")
+    stamp = header.index('<span class="stamp opt">As of 14:05:09</span>')
+    refresh = header.index('<a class="icon-button" id="refresh" href="" role="button" title="Refresh">')
+    settings = header.index('<a class="icon-button" href="/config/app/local_media_fetcher/config" target="_top" '
+                            'title="Settings">')
+    assert stamp < refresh < settings
+    assert header.count("<a ") == 2 and "<button" not in header
+    # Without a slug there is no settings link, the rest stays
+    header = re.search(r"<header>(.*?)</header>", render(Context(None, "", {}, "1.0.0", frozenset(), frozenset()),
+                                                         [], now=now)).group(1)
+    assert "/config/app/" not in header and 'id="refresh"' in header and "As of 14:05:09" in header
+
+
 async def test_private_addresses_are_refused_before_a_job_starts(client, scenario):
     for path in ("/api/v1/info", "/api/v1/jobs"):
         resp = await client.post(path, json={"url": "http://nas.lan/Mediasite/Play/1", "kind": "audio"}, headers=bearer())
@@ -421,8 +445,9 @@ async def test_the_page_runs_only_its_own_script_and_style(client):
 
 async def test_the_page_shows_the_version_at_the_bottom_in_home_assistants_look(client):
     page = await (await client.get("/")).text()
-    assert page.rstrip().endswith("</script></body></html>")
-    assert '<footer class="version">Media Fetcher 0.2.0</footer><script' in page
+    # The version line is the last element of the body; the script sits in the head
+    assert page.rstrip().endswith('<footer class="version">Media Fetcher 0.2.0</footer></body></html>')
+    assert page.index("<script") < page.index("</head>")
     assert page.index("</main>") < page.index('<footer class="version">')
     # The shared stylesheet, unchanged, then the page's own rules
     from media_fetcher.api import HA_CSS

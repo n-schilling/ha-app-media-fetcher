@@ -1,8 +1,10 @@
 #!/bin/bash
 # Runs locally what the CI workflow runs, so a push only confirms what already
 # passed here: the changelog check, shellcheck, ruff, the tests with their
-# coverage threshold under Python 3.13 (the image's) and 3.14, and the image
-# build with its start checks. Keep the steps in step with
+# coverage threshold under Python 3.13 (the image's) and 3.14, the image
+# build with its start checks, and the Page check (scripts/screenshots.py:
+# the image with made-up jobs behind a stand-in for the ingress proxy, in a
+# headless browser; needs uv, the pictures go to a temporary folder). Keep the steps in step with
 # .github/workflows/ci.yaml. The app configuration linter
 # (frenck/action-addon-linter) runs in CI only.
 #
@@ -97,6 +99,14 @@ else
         out=$(docker run --rm --network none --user fetcher -e PYTHONPATH=/usr/lib --entrypoint python3 \
             media-fetcher:check -m media_fetcher 2>&1 || true)
         grep -q "/data/options.json not readable" <<< "$out"'
+    if command -v uv > /dev/null; then
+        shots=$(mktemp -d)
+        run "Page" uv run -q --with playwright==1.65.0 python scripts/screenshots.py \
+            --image media-fetcher:check --out "$shots"
+        rm -rf "$shots"
+    else
+        skipped+=("Page (no uv)")
+    fi
 fi
 skipped+=("App configuration linter (CI only)" "AppArmor profile (CI only, needs a kernel with AppArmor)")
 
