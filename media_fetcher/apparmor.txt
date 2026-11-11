@@ -39,7 +39,7 @@ profile media_fetcher flags=(attach_disconnected,mediate_deleted) {
   /run/s6/** rix,
   /run/s6-rc*/** rix,
   /run/service/** rix,
-  /run/ r,
+  /run/ rw,
 
   # Programs and libraries of the image
   /bin/** rix,
@@ -48,6 +48,7 @@ profile media_fetcher flags=(attach_disconnected,mediate_deleted) {
   /usr/sbin/** rix,
   /usr/local/bin/** rix,
   /usr/lib/** rm,
+  /usr/lib/bashio/bashio rix,
   /usr/local/lib/** rm,
   /lib/** rm,
   /opt/venv/** rm,
