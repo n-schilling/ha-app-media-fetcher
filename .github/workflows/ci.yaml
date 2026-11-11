@@ -105,9 +105,10 @@ jobs:
       - name: Start without options
         env:
           PLATFORM: ${{ matrix.platform }}
-        # The service loads, finds no options and says so
+        # The service loads as its own user, as the s6 service starts it, finds
+        # no options and says so
         run: |
-          out=$(docker run --rm --network none --platform "${PLATFORM}" -e PYTHONPATH=/usr/lib \
+          out=$(docker run --rm --network none --platform "${PLATFORM}" --user fetcher -e PYTHONPATH=/usr/lib \
             --entrypoint python3 media-fetcher:test -m media_fetcher 2>&1 || true)
           echo "${out}"
           grep -q '/data/options.json not readable' <<< "${out}"

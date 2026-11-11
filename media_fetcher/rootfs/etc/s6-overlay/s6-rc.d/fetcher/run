@@ -1,8 +1,12 @@
 #!/command/with-contenv bashio
 # shellcheck shell=bash
 # ==============================================================================
-# Runs the fetch service
+# Runs the fetch service as user fetcher, not as root. The data folder (the
+# options and the jobs) is handed to that user first; the Supervisor writes
+# the options as root. Only what is not that user's yet, so a start does not
+# walk every job.
 # ==============================================================================
+find /data \! -user fetcher -exec chown -h fetcher:fetcher {} +
 export PYTHONPATH=/usr/lib
 export PATH="/opt/venv/bin:${PATH}"
-exec python3 -m media_fetcher
+exec /command/s6-setuidgid fetcher python3 -m media_fetcher

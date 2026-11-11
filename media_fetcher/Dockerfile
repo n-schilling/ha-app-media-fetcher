@@ -13,7 +13,8 @@ RUN \
         python3 \
         python3-venv \
         ffmpeg \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin fetcher
 
 # requirements.txt pins every package with its hashes (uv pip compile from
 # requirements.in), so a build installs exactly the files reviewed

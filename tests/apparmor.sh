@@ -1,6 +1,6 @@
 #!/bin/bash
 # Runs the image under the app's AppArmor profile and checks what the profile
-# promises: the app starts and answers, the service may use the network,
+# promises: the app starts and answers as user fetcher, the service may use the network,
 # ffmpeg, ffprobe and Deno run in the child profile "offline" and reach no
 # address, but still convert files and run JavaScript.
 #
@@ -44,6 +44,10 @@ done
 [[ -n "${service:-}" ]] || fail "the service does not run"
 [[ "$(profile "${service}")" == "media_fetcher (enforce)" ]] || fail "service runs as $(profile "${service}")"
 echo "ok: the service runs as media_fetcher (enforce)"
+[[ "$(stat -c %U "/proc/${service}")" == fetcher ]] || fail "service runs as user $(stat -c %U "/proc/${service}")"
+echo "ok: the service runs as user fetcher"
+[[ "$(stat -c %U /data/jobs)" == fetcher ]] || fail "/data/jobs belongs to $(stat -c %U /data/jobs)"
+echo "ok: the jobs folder belongs to fetcher"
 
 mkdir -p /tmp/www
 ffmpeg -v error -y -f lavfi -i sine=d=1 /tmp/www/a.m4a || fail "ffmpeg cannot convert under the profile"

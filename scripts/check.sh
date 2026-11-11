@@ -94,7 +94,7 @@ else
         out=$(docker run --rm --network none --entrypoint yt-dlp media-fetcher:check -v 2>&1 || true)
         grep -q "JS runtimes: deno-" <<< "$out" && grep -q "exe versions: ffmpeg" <<< "$out"'
     run "Start without options" bash -c '
-        out=$(docker run --rm --network none -e PYTHONPATH=/usr/lib --entrypoint python3 \
+        out=$(docker run --rm --network none --user fetcher -e PYTHONPATH=/usr/lib --entrypoint python3 \
             media-fetcher:check -m media_fetcher 2>&1 || true)
         grep -q "/data/options.json not readable" <<< "$out"'
 fi
