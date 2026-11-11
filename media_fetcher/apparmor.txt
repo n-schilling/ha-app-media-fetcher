@@ -47,6 +47,7 @@ profile media_fetcher flags=(attach_disconnected,mediate_deleted) {
   /usr/bin/** rix,
   /usr/sbin/** rix,
   /usr/local/bin/** rix,
+  /usr/lib/ r,
   /usr/lib/** rm,
   /usr/lib/bashio/bashio rix,
   /usr/local/lib/** rm,
@@ -69,7 +70,7 @@ profile media_fetcher flags=(attach_disconnected,mediate_deleted) {
   /tmp/** rwk,
 
   # Options and jobs
-  /data/ r,
+  /data/ rw,
   /data/** rwk,
 
   @{PROC}/@{pid}/** r,
