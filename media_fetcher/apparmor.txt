@@ -30,7 +30,7 @@ profile media_fetcher flags=(attach_disconnected,mediate_deleted) {
   signal (send, receive),
 
   # s6-overlay
-  /init ix,
+  /init rix,
   /package/** rix,
   /command/** rix,
   /etc/s6-overlay/** rix,
