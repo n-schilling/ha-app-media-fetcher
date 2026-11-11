@@ -3,7 +3,7 @@ image with made-up jobs in a throwaway container, opens the page with a
 headless browser the way Home Assistant's ingress does, checks it and takes
 the pictures.
 
-    docker build --build-arg BUILD_VERSION=0.3.2 -t media-fetcher:check media_fetcher
+    docker build --build-arg BUILD_VERSION=0.4.0 -t media-fetcher:check media_fetcher
     uv run --with playwright==1.65.0 python scripts/screenshots.py --image media-fetcher:check
 
 Two containers of the image in a throwaway Docker network with Home

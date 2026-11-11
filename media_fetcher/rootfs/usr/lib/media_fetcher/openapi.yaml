@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Media Fetcher
-  version: 0.3.2
+  version: 0.4.0
   summary: Fetches audio or video from links yt-dlp understands, as a service in Home Assistant's app network
   description: |
     A small HTTP service of the Media Fetcher app for Home Assistant. `info` tells what a link
