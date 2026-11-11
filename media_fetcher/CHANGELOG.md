@@ -2,6 +2,13 @@
 
 All notable changes to this app are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the app uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-11-11
+
+### Changed
+
+- The page's header starts with the app's icon, the one of the app store, left of the name, like on the pages of all of these apps and integrations. The app serves the icon itself as `icon.png` next to the page, so it needs no new permission. The page has one view, so there are no tabs
+- The page check also checks that the icon loads and sits in the row of the name
+
 ## [0.4.1] - 2026-11-11
 
 ### Changed

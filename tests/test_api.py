@@ -1,6 +1,7 @@
 """The HTTP API and the status page."""
 
 import threading
+from pathlib import Path
 
 import pytest
 from conftest import TOKEN, Scenario, bearer, create_app, resolve, wait_for
@@ -214,6 +215,24 @@ async def test_status_page_for_the_ingress_peer_only(client, manager, aiohttp_cl
     assert resp.status == 200
 
 
+async def test_app_icon(client, manager, aiohttp_client, monkeypatch):
+    # The store icon, copied into the image; the page links it relative to the ingress path
+    from media_fetcher import api
+
+    icon = (Path(__file__).resolve().parents[1] / "media_fetcher/icon.png").read_bytes()
+    assert icon.startswith(b"\x89PNG")
+    monkeypatch.setattr(api, "APP_ICON", icon)
+    resp = await client.get("/icon.png")
+    assert (resp.status, resp.headers["Content-Type"], await resp.read()) == (200, "image/png", icon)
+    assert resp.headers["Cache-Control"] == "max-age=86400"
+    page = await (await client.get("/")).text()
+    assert '<header><img class="app-icon" src="icon.png" alt="" width="24" height="24"><h1>' in page
+    other = await aiohttp_client(create_app(manager, TOKEN, {}, "0.2.0", page_peers=frozenset({"172.30.32.2"})))
+    assert (await other.get("/icon.png")).status == 403
+    monkeypatch.setattr(api, "APP_ICON", None)
+    assert (await client.get("/icon.png")).status == 404
+
+
 async def test_status_page_without_jobs(client):
     page = await (await client.get("/")).text()
     assert "No jobs." in page and "from the options" in page and "Home Assistant only" not in page
@@ -230,7 +249,8 @@ def test_page_header_has_stamp_refresh_and_settings_in_that_order():
                   core_peers=frozenset(), slug="local_media_fetcher")
     page = render(ctx, [], now=now)
     header = re.search(r"<header>(.*?)</header>", page).group(1)
-    assert header.startswith("<h1>Media Fetcher</h1><div class=\"actions\">")
+    assert header.startswith('<img class="app-icon" src="icon.png" alt="" width="24" height="24">'
+                             '<h1>Media Fetcher</h1><div class="actions">')
     stamp = header.index('<span class="stamp opt">As of 14:05:09</span>')
     refresh = header.index('<a class="icon-button" id="refresh" href="" role="button" title="Refresh">')
     settings = header.index('<a class="icon-button" href="/config/app/local_media_fetcher/config" target="_top" '

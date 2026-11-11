@@ -22,6 +22,7 @@ import functools
 import hmac
 import html
 import json
+import logging
 import re
 import secrets
 import time
@@ -307,7 +308,23 @@ HA_CSS = Path(__file__).resolve().parents[2] / "local/share/ha-app/ha.css"
 # Home Assistant's language for the page (cookie ha_lang), shared like the
 # stylesheet; it runs first, in the page's one script
 HA_LANG_JS = HA_CSS.with_name("ha-lang.js")
+# The app's store icon at the left of the header, copied into the image next
+# to the stylesheet; the page links it as icon.png, relative to the ingress path
+APP_ICON_FILE = HA_CSS.with_name("icon.png")
+
+
+def app_icon() -> bytes | None:
+    try:
+        return APP_ICON_FILE.read_bytes()
+    except OSError:
+        logging.getLogger(__name__).warning("Icon %s missing", APP_ICON_FILE)
+        return None
+
+
+APP_ICON = app_icon()
+APP_ICON_TAG = '<img class="app-icon" src="icon.png" alt="" width="24" height="24">'
 STYLE = """
+header > .app-icon { flex: none; width: 24px; height: 24px; margin-right: 12px; }
 section.fetch { margin: 0 auto; padding: 16px 16px 0; max-width: 1040px; }
 section.fetch .card { margin-bottom: 0; }
 #fetch { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px 16px; }
@@ -623,7 +640,7 @@ def render(ctx: Context, jobs: list[dict], base: str = "", nonce: str = "", now:
             f'<style nonce="{esc(nonce)}">{ha_css()}</style><style nonce="{esc(nonce)}">{STYLE}</style>'
             f'<script nonce="{esc(nonce)}">{page_script()}</script></head>'
             f'<body data-base="{esc(base)}" data-text="{esc(say)}">'
-            f'<header><h1>Media Fetcher</h1><div class="actions">{actions}</div></header>'
+            f'<header>{APP_ICON_TAG}<h1>Media Fetcher</h1><div class="actions">{actions}</div></header>'
             f'<section class="fetch"><div class="card"><h2>{t["fetch"]}</h2>'
             f'<div class="content">{_form(t)}</div></div></section><main>'
             f'<div class="card"><h2>{t["jobs"]}</h2>{table}</div>'
@@ -650,6 +667,14 @@ async def status_page(request: web.Request) -> web.Response:
                         headers={"Cache-Control": "no-store", "Content-Security-Policy": csp(nonce)})
 
 
+async def icon_file(request: web.Request) -> web.Response:
+    if request.remote not in request.app["ctx"].page_peers:
+        return web.Response(status=403, text="only through Home Assistant")
+    if APP_ICON is None:
+        return web.Response(status=404, text="not found")
+    return web.Response(body=APP_ICON, content_type="image/png", headers={"Cache-Control": "max-age=86400"})
+
+
 # --- the application -------------------------------------------------------------------------
 def create_app(manager: JobManager, token: str, versions: dict, version: str,
                page_peers: frozenset[str] = frozenset({INGRESS_PEER}),
@@ -667,6 +692,7 @@ def create_app(manager: JobManager, token: str, versions: dict, version: str,
     app.router.add_delete(f"{API}/jobs/{{id}}", delete_job)
     app.router.add_get(f"{API}/jobs/{{id}}/file", get_file)
     app.router.add_get("/", status_page)
+    app.router.add_get("/icon.png", icon_file)
     app.router.add_post("/jobs", page_create_job)
     app.router.add_delete("/jobs/{id}", page_delete_job)
     app.router.add_get("/jobs/{id}/file", page_file)

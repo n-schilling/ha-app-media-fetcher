@@ -150,6 +150,12 @@ def check_header(check: Checks, page: Page | Frame, name: str, width: int, lang:
       const kids = [...h.children], actions = h.querySelector(".actions");
       return {
         first: kids.map((e) => e.tagName.toLowerCase()), h1: (h.querySelector("h1") || {}).textContent,
+        // The store icon left of the name: loaded, 24 px, in the row of the name
+        icon: h.firstElementChild.matches("img.app-icon") ? (() => {
+          const box = h.firstElementChild.getBoundingClientRect(), name = h.querySelector(":scope > h1").getBoundingClientRect();
+          return {src: h.firstElementChild.getAttribute("src"), loaded: h.firstElementChild.complete && h.firstElementChild.naturalWidth > 0,
+                  size: [box.width, box.height], row: Math.abs((box.top + box.bottom) / 2 - (name.top + name.bottom) / 2) < 2};
+        })() : null,
         actions: actions ? [...actions.children].map((e) => ({
           tag: e.tagName.toLowerCase(), cls: e.className.baseVal ?? e.className, id: e.id, text: e.textContent,
           href: e.getAttribute("href"), target: e.getAttribute("target"), title: e.getAttribute("title"),
@@ -160,8 +166,10 @@ def check_header(check: Checks, page: Page | Frame, name: str, width: int, lang:
     check(header is not None, f"{name}: the page has a header")
     if header is None:
         return
-    check(header["first"] == ["h1", "div"] and header["h1"] == "Media Fetcher",
-          f"{name}: header is h1 'Media Fetcher' and the actions ({header['first']}, {header['h1']!r})")
+    check(header["first"] == ["img", "h1", "div"] and header["h1"] == "Media Fetcher",
+          f"{name}: header is the icon, h1 'Media Fetcher' and the actions ({header['first']}, {header['h1']!r})")
+    check(header["icon"] == {"src": "icon.png", "loaded": True, "size": [24, 24], "row": True},
+          f"{name}: the app's icon shows, 24 px, in the row of the name ({header['icon']})")
     acts = header["actions"]
     check([a["tag"] for a in acts] == ["span", "a", "a"], f"{name}: actions are stamp, refresh, settings")
     if len(acts) == 3:

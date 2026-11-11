@@ -24,6 +24,8 @@ RUN python3 -m venv /opt/venv \
     && rm /tmp/requirements.txt
 
 COPY rootfs /
+# The store icon, also at the left of the page's header (served as icon.png)
+COPY icon.png /usr/local/share/ha-app/icon.png
 RUN /opt/venv/bin/python3 -m compileall -q /usr/lib/media_fetcher
 
 ARG BUILD_ARCH BUILD_DATE BUILD_DESCRIPTION BUILD_NAME BUILD_REF BUILD_REPOSITORY BUILD_VERSION
