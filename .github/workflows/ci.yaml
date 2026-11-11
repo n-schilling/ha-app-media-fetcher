@@ -138,10 +138,13 @@ jobs:
           version=$(yq -r '.version' media_fetcher/config.yaml)
           docker build --build-arg "BUILD_VERSION=${version}" -t media-fetcher:check media_fetcher
       - name: Playwright
+        # The script drives the runner's Google Chrome; Playwright's own
+        # Chromium only when there is none (its --with-deps step needs the
+        # Ubuntu mirrors, which made the job flaky)
         run: |
           python -m venv .venv-page
           .venv-page/bin/pip install playwright==1.65.0
-          .venv-page/bin/playwright install --with-deps chromium
+          google-chrome --version || .venv-page/bin/playwright install --with-deps chromium
       - name: Page through ingress, light, dark and phone width
         # The image with made-up jobs in a throwaway container, behind a
         # stand-in for the ingress proxy at its address; see the script
