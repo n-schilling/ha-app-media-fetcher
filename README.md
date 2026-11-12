@@ -62,7 +62,7 @@ uv venv -p 3.14 .venv-314 && uv pip install -p .venv-314 --require-hashes -r med
 scripts/check.sh
 ```
 
-`scripts/check.sh` runs what CI runs: changelog, shellcheck, ruff, the tests with coverage on both Pythons and, with Docker, the image build with its start checks and the Page check (`--no-image` skips them). The app linter and the AppArmor test (`tests/apparmor.sh`, which needs a kernel with AppArmor) run in CI only.
+`scripts/check.sh` runs what CI runs: changelog, shellcheck, ruff, the tests with coverage on both Pythons and, with Docker, the image build with its start checks and the Page check (`--no-image` skips them). The app linter and the AppArmor test (`tests/apparmor.sh`, which needs a kernel with AppArmor) run in CI only. The page check is not part of CI: run `scripts/check.sh` before a release that changes the page.
 
 The packages are pinned with hashes; after changing `media_fetcher/requirements.in`:
 
@@ -70,7 +70,7 @@ The packages are pinned with hashes; after changing `media_fetcher/requirements.
 cd media_fetcher && uv pip compile requirements.in --generate-hashes --universal --python-version 3.13 -o requirements.txt
 ```
 
-The Page check (CI job **Page**, and the step "Page" of `scripts/check.sh`) starts the built image with made-up jobs ([`scripts/page/demo.py`](scripts/page/demo.py)) in a throwaway container, puts a stand-in for Home Assistant's ingress proxy in front of it at the proxy's address ([`scripts/page/ingress.py`](scripts/page/ingress.py)) and opens the page in a headless browser: the header (name, stamp, refresh, settings link with `target="_top"` and the slug), the version line, no console errors or content security policy violations, light, dark and phone width, and refresh, the self-update, removing a job, the gear inside Home Assistant's frame, and that the page follows Home Assistant's language (German, English, French) over the browser's, with one reload. The same script takes the screenshots in `docs/screenshots`:
+The Page check (the step "Page" of `scripts/check.sh`) starts the built image with made-up jobs ([`scripts/page/demo.py`](scripts/page/demo.py)) in a throwaway container, puts a stand-in for Home Assistant's ingress proxy in front of it at the proxy's address ([`scripts/page/ingress.py`](scripts/page/ingress.py)) and opens the page in a headless browser: the header (name, stamp, refresh, settings link with `target="_top"` and the slug), the version line, no console errors or content security policy violations, light, dark and phone width, and refresh, the self-update, removing a job, the gear inside Home Assistant's frame, and that the page follows Home Assistant's language (German, English, French) over the browser's, with one reload. The same script takes the screenshots in `docs/screenshots`:
 
 ```bash
 docker build --build-arg BUILD_VERSION=dev -t media-fetcher:check media_fetcher
