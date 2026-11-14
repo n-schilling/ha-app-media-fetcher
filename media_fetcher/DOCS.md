@@ -257,7 +257,7 @@ With `trust_home_assistant` off, Core sends the token as well: give both rest co
 ## Troubleshooting
 
 - **A site fails with `not_available` or `extract_failed`:** set `log_level` to `debug` and fetch again; the log then holds every message of yt-dlp. Sites change often, and yt-dlp follows; check for an update of the app first.
-- **The log warns about no JavaScript runtime or no ffmpeg:** the image is incomplete; rebuild it with **Rebuild** on the app's page.
+- **The log warns about no JavaScript runtime or no ffmpeg:** the image is incomplete; uninstall the app and install it again, which pulls the image anew (back up its options first).
 - **`507 insufficient_storage` or `too_large`:** free space on Home Assistant's data partition (old backups, the recorder database) or raise `max_size_mb`; finished files leave after `keep_minutes`, or at once with `DELETE`.
 - **`401 unauthorized` from another app:** set a `token` and send it as `Authorization: Bearer <token>`.
 - **`401 unauthorized` from Home Assistant:** `trust_home_assistant` is off; send the token, or turn the option back on.

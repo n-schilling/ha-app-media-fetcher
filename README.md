@@ -50,7 +50,7 @@ A client asks what a link holds (`info`) or starts a job; yt-dlp fetches the med
    https://github.com/n-schilling/ha-app-media-fetcher
    ```
 
-2. Install **Media Fetcher**, review the options and start it. The Supervisor builds the image on your machine; that takes a few minutes.
+2. Install **Media Fetcher**, review the options and start it. The Supervisor pulls the image from the GitHub Container Registry (about 300 MB to download).
 
 ## Development
 
