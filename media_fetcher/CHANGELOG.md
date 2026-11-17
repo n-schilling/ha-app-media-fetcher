@@ -2,6 +2,14 @@
 
 All notable changes to this app are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the app uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.2] - 2026-11-17
+
+### Changed
+
+- The page's header follows the shared app standard: the stylesheet `ha.css` is the current copy shared by all the author's apps (header icon `img.brand`, view tabs and the bottom bar on a phone), and the page drops its own rule for the icon. It looks as before
+- The card with the options the app runs with is called *Options in use* / *Aktive Optionen* instead of *Settings* / *Einstellungen*, so it is not taken for the gear in the header, which opens the options in Home Assistant
+- The Page check compares the name in the header with `name` in `config.yaml`, checks that the icon stands left of the name, that icon, name and buttons stay within the header on a phone, that there is no bottom bar, and that refresh moves the stamp
+
 ## [0.5.1] - 2026-11-14
 
 ### Changed

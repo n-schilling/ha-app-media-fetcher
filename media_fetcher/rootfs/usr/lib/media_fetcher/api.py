@@ -7,7 +7,7 @@ trust_home_assistant is on; without a token in the options nobody else gets
 in. Errors are JSON: {"error": {"code": "...", "message": "..."}}.
 
 The page at / is HTML for Home Assistant's ingress and answers only the
-ingress proxy, so only administrators see it. It shows versions, settings
+ingress proxy, so only administrators see it. It shows versions, the options in use
 and the jobs, never the token, and has a form that starts a job and a
 download link for every finished one. Its own endpoints (/jobs, /jobs/{id},
 /jobs/{id}/file) are the API's without the token: the ingress session is
@@ -322,9 +322,8 @@ def app_icon() -> bytes | None:
 
 
 APP_ICON = app_icon()
-APP_ICON_TAG = '<img class="app-icon" src="icon.png" alt="" width="24" height="24">'
+APP_ICON_TAG = '<img class="brand" src="icon.png" alt="" width="24" height="24">'
 STYLE = """
-header > .app-icon { flex: none; width: 24px; height: 24px; margin-right: 12px; }
 section.fetch { margin: 0 auto; padding: 16px 16px 0; max-width: 1040px; }
 section.fetch .card { margin-bottom: 0; }
 #fetch { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px 16px; }
@@ -465,7 +464,8 @@ def page_script() -> str:
 # The page's texts; German for Home Assistant in German, else English
 TEXT = {
     "en": {
-        "as_of": "As of", "refresh": "Refresh", "settings": "Settings", "fetch": "Fetch", "jobs": "Jobs",
+        "as_of": "As of", "refresh": "Refresh", "settings": "Settings", "options": "Options in use",
+        "fetch": "Fetch", "jobs": "Jobs",
         "service": "Service", "link": "Link", "format": "Format", "keep": " (keep the source format)",
         "hint": "Paste a link, pick a format, and download the file from the list below when the job is done.",
         "starting": "Starting …", "started": "Job ID started; the download link appears below when it is done.",
@@ -482,7 +482,8 @@ TEXT = {
                    "converting": "converting", "done": "done", "failed": "failed", "cancelled": "cancelled"},
     },
     "de": {
-        "as_of": "Stand", "refresh": "Aktualisieren", "settings": "Einstellungen", "fetch": "Abrufen",
+        "as_of": "Stand", "refresh": "Aktualisieren", "settings": "Einstellungen", "options": "Aktive Optionen",
+        "fetch": "Abrufen",
         "jobs": "Aufträge", "service": "Dienst", "link": "Link", "format": "Format",
         "keep": " (Format der Quelle behalten)",
         "hint": "Link einfügen, Format wählen und die Datei unten aus der Liste laden, sobald der Auftrag fertig ist.",
@@ -645,7 +646,7 @@ def render(ctx: Context, jobs: list[dict], base: str = "", nonce: str = "", now:
             f'<div class="content">{_form(t)}</div></div></section><main>'
             f'<div class="card"><h2>{t["jobs"]}</h2>{table}</div>'
             f'<div class="cards"><div class="card"><h2>{t["service"]}</h2><div class="content">{service}</div></div>'
-            f'<div class="card"><h2>{t["settings"]}</h2><div class="content">{settings}</div></div></div>'
+            f'<div class="card"><h2>{t["options"]}</h2><div class="content">{settings}</div></div></div>'
             f'</main><footer class="version">Media Fetcher {esc(ctx.version)}</footer></body></html>')
 
 

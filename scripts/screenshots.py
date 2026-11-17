@@ -13,12 +13,14 @@ gives it, and the ingress proxy (scripts/page/ingress.py) at 172.30.32.2,
 the only address the page answers. The browser talks to the proxy only, on
 a port of 127.0.0.1.
 
-Checked in light, dark and at phone width: the header (name, stamp with the
-app's time, refresh, settings link with target="_top" and the slug from the
-host name), the version line as the last element, no console errors, no
-script errors, no content security policy violations, no sideways
-scrolling; and once that refresh reloads, the page updates itself with the
-stamp, a job is removed, and the settings link leaves the ingress frame; and
+Checked in light, dark and at phone width: the header (the store icon left
+of the name, the name exactly as `name` in config.yaml, everything within
+the header's box, no tabs and no bottom bar for this single view, stamp
+with the app's time, refresh, settings link with target="_top" and the slug
+from the host name), the version line as the last element, no console
+errors, no script errors, no content security policy violations, no
+sideways scrolling; and once that refresh reloads and moves the stamp, the
+page updates itself with the stamp, a job is removed, and the settings link leaves the ingress frame; and
 that the page takes Home Assistant's language (a stand-in for its frontend
 in German, English and French around the frame) over the browser's,
 reloading once.
@@ -67,11 +69,18 @@ document.addEventListener("securitypolicyviolation",
   (e) => window.__csp.push(e.violatedDirective + " " + (e.blockedURI || "inline")));"""
 
 
-def version() -> str:
+def config(key: str) -> str:
     for line in (ROOT / "media_fetcher/config.yaml").read_text().splitlines():
-        if line.startswith("version:"):
+        if line.startswith(f"{key}:"):
             return line.split(":", 1)[1].strip().strip('"')
-    raise SystemExit("no version in config.yaml")
+    raise SystemExit(f"no {key} in config.yaml")
+
+
+def version() -> str:
+    return config("version")
+
+
+NAME = config("name")  # the name the app store shows; the header must say exactly this
 
 
 def docker(*args: str, check: bool = True) -> str:
@@ -151,11 +160,22 @@ def check_header(check: Checks, page: Page | Frame, name: str, width: int, lang:
       return {
         first: kids.map((e) => e.tagName.toLowerCase()), h1: (h.querySelector("h1") || {}).textContent,
         // The store icon left of the name: loaded, 24 px, in the row of the name
-        icon: h.firstElementChild.matches("img.app-icon") ? (() => {
+        icon: h.firstElementChild.matches("img.brand") ? (() => {
           const box = h.firstElementChild.getBoundingClientRect(), name = h.querySelector(":scope > h1").getBoundingClientRect();
           return {src: h.firstElementChild.getAttribute("src"), loaded: h.firstElementChild.complete && h.firstElementChild.naturalWidth > 0,
-                  size: [box.width, box.height], row: Math.abs((box.top + box.bottom) / 2 - (name.top + name.bottom) / 2) < 2};
+                  size: [box.width, box.height], row: Math.abs((box.top + box.bottom) / 2 - (name.top + name.bottom) / 2) < 2,
+                  left: box.right <= name.left};
         })() : null,
+        // Icon, name and buttons within the header's box (on a phone too)
+        inside: (() => {
+          const box = h.getBoundingClientRect();
+          return [h.firstElementChild, h.querySelector(":scope > h1"), ...(actions ? actions.children : [])]
+            .filter((e) => e && getComputedStyle(e).display !== "none")
+            .every((e) => { const r = e.getBoundingClientRect();
+              return r.left >= box.left - 0.5 && r.right <= box.right + 0.5 && r.top >= box.top - 0.5 && r.bottom <= box.bottom + 0.5; });
+        })(),
+        // A single view: no tabs, so no bar at the bottom either
+        tabs: document.querySelectorAll("header .tabs, header .tab").length,
         actions: actions ? [...actions.children].map((e) => ({
           tag: e.tagName.toLowerCase(), cls: e.className.baseVal ?? e.className, id: e.id, text: e.textContent,
           href: e.getAttribute("href"), target: e.getAttribute("target"), title: e.getAttribute("title"),
@@ -166,10 +186,12 @@ def check_header(check: Checks, page: Page | Frame, name: str, width: int, lang:
     check(header is not None, f"{name}: the page has a header")
     if header is None:
         return
-    check(header["first"] == ["img", "h1", "div"] and header["h1"] == "Media Fetcher",
-          f"{name}: header is the icon, h1 'Media Fetcher' and the actions ({header['first']}, {header['h1']!r})")
-    check(header["icon"] == {"src": "icon.png", "loaded": True, "size": [24, 24], "row": True},
-          f"{name}: the app's icon shows, 24 px, in the row of the name ({header['icon']})")
+    check(header["first"] == ["img", "h1", "div"] and header["h1"] == NAME,
+          f"{name}: header is the icon, h1 {NAME!r} (config.yaml) and the actions ({header['first']}, {header['h1']!r})")
+    check(header["icon"] == {"src": "icon.png", "loaded": True, "size": [24, 24], "row": True, "left": True},
+          f"{name}: the app's icon shows, 24 px, left of the name in its row ({header['icon']})")
+    check(header["inside"], f"{name}: icon, name and buttons within the header at {width} px")
+    check(header["tabs"] == 0, f"{name}: a single view, no tabs and no bottom bar")
     acts = header["actions"]
     check([a["tag"] for a in acts] == ["span", "a", "a"], f"{name}: actions are stamp, refresh, settings")
     if len(acts) == 3:
@@ -190,7 +212,7 @@ def check_page(check: Checks, page, name: str, width: int, scheme: str, expected
     check_header(check, page, name, width)
     last = page.evaluate("""() => { const e = document.body.lastElementChild;
       return e ? e.tagName.toLowerCase() + "." + e.className + " " + e.textContent : null; }""")
-    check(last == f"footer.version Media Fetcher {expected_version}", f"{name}: version line last ({last!r})")
+    check(last == f"footer.version {NAME} {expected_version}", f"{name}: version line last ({last!r})")
     over = page.evaluate("() => document.documentElement.scrollWidth - window.innerWidth")
     check(over <= 0, f"{name}: no sideways scrolling ({over} px over)")
     light = luminance(page.evaluate("() => getComputedStyle(document.body).backgroundColor")) > 0.5
@@ -286,11 +308,14 @@ def interact(check: Checks, browser, base: str) -> None:
         check(resp.status == 200 and "Evening birdsong" in resp.headers.get("content-disposition", ""),
               f"download answers ({resp.status})")
     page.evaluate("() => { window.__before = true; }")
+    before = page.text_content("header .stamp")
+    page.wait_for_timeout(1_100)  # the stamp counts whole seconds
     with page.expect_navigation():
         page.click("#refresh")
     page.wait_for_load_state("networkidle")
     check(page.evaluate("() => window.__before === undefined"), "refresh reloads the page")
     stamp = page.text_content("header .stamp")
+    check(stamp != before, f"refresh fetches again and moves the stamp ({before} → {stamp})")
     page.wait_for_timeout(11_500)
     later = page.text_content("header .stamp")
     check(later != stamp and page.locator("table.list").count() == 1,

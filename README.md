@@ -13,7 +13,7 @@ Requires Home Assistant 2026.11 or later.
 
 The page looks like Home Assistant's own settings, follows the theme in use and speaks the language of Home Assistant's interface (German or English). The jobs on these pictures are made up.
 
-<img src="docs/screenshots/page.png" alt="The page: a form to fetch a link, the jobs with state, title, format and download link, the versions and settings" width="700">
+<img src="docs/screenshots/page.png" alt="The page: a form to fetch a link, the jobs with state, title, format and download link, the versions and the options in use" width="700">
 
 <img src="docs/screenshots/phone-dark.png" alt="The page on a phone in dark mode, one block per job" width="260">
 
@@ -70,7 +70,7 @@ The packages are pinned with hashes; after changing `media_fetcher/requirements.
 cd media_fetcher && uv pip compile requirements.in --generate-hashes --universal --python-version 3.13 -o requirements.txt
 ```
 
-The Page check (the step "Page" of `scripts/check.sh`) starts the built image with made-up jobs ([`scripts/page/demo.py`](scripts/page/demo.py)) in a throwaway container, puts a stand-in for Home Assistant's ingress proxy in front of it at the proxy's address ([`scripts/page/ingress.py`](scripts/page/ingress.py)) and opens the page in a headless browser: the header (name, stamp, refresh, settings link with `target="_top"` and the slug), the version line, no console errors or content security policy violations, light, dark and phone width, and refresh, the self-update, removing a job, the gear inside Home Assistant's frame, and that the page follows Home Assistant's language (German, English, French) over the browser's, with one reload. The same script takes the screenshots in `docs/screenshots`:
+The Page check (the step "Page" of `scripts/check.sh`) starts the built image with made-up jobs ([`scripts/page/demo.py`](scripts/page/demo.py)) in a throwaway container, puts a stand-in for Home Assistant's ingress proxy in front of it at the proxy's address ([`scripts/page/ingress.py`](scripts/page/ingress.py)) and opens the page in a headless browser: the header (icon left of the name, the name as in `config.yaml`, all within the header, no tabs or bottom bar, stamp, refresh, settings link with `target="_top"` and the slug), the version line, no console errors or content security policy violations, light, dark and phone width, and that refresh moves the stamp, the self-update, removing a job, the gear inside Home Assistant's frame, and that the page follows Home Assistant's language (German, English, French) over the browser's, with one reload. The same script takes the screenshots in `docs/screenshots`:
 
 ```bash
 docker build --build-arg BUILD_VERSION=dev -t media-fetcher:check media_fetcher
