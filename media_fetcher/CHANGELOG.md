@@ -2,6 +2,13 @@
 
 All notable changes to this app are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the app uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.3] - 2026-11-17
+
+### Security
+
+- Every answer of the app, the page, its data, the API and errors alike, carries the security headers of the shared app standard: `Referrer-Policy: no-referrer`, so the ingress path with its token never leaves Home Assistant as a referrer; `Cache-Control: no-store` for everything but the icon; and a content security policy that loads, runs and lets frame nothing but Home Assistant also on answers other than the page. The page's own policy no longer allows stylesheets from the app or `data:` images, which it does not use
+- The Page check reads these headers on the page answers it opens; a unit test checks them on every kind of answer
+
 ## [0.5.2] - 2026-11-17
 
 ### Changed

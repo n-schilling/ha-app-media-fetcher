@@ -464,6 +464,29 @@ async def test_every_answer_forbids_sniffing(client):
         assert resp.headers["X-Content-Type-Options"] == "nosniff", path
 
 
+async def test_every_answer_carries_the_security_headers(client, monkeypatch):
+    """STANDARD.md section 3: policy, no referrer, no cache but the icon's."""
+    from media_fetcher import api
+    monkeypatch.setattr(api, "APP_ICON", b"\x89PNG")
+    for path in ("/", "/icon.png", "/api/v1/health", "/api/v1/jobs", "/api/v1/nothing", "/jobs/nothing/file"):
+        resp = await client.get(path)
+        policy = {part.split()[0]: part.split()[1:]
+                  for part in resp.headers["Content-Security-Policy"].split(";") if part.strip()}
+        assert policy["default-src"] == ["'none'"], path
+        assert policy["base-uri"] == ["'none'"] and policy["form-action"] == ["'none'"], path
+        assert policy["frame-ancestors"] == ["'self'"], path
+        assert resp.headers["X-Content-Type-Options"] == "nosniff", path
+        assert resp.headers["Referrer-Policy"] == "no-referrer", path
+        assert resp.headers["Cache-Control"] == ("max-age=86400" if path == "/icon.png" else "no-store"), path
+    page = await client.get("/")
+    policy = {part.split()[0]: part.split()[1:]
+              for part in page.headers["Content-Security-Policy"].split(";") if part.strip()}
+    assert len(policy["script-src"]) == 1 and policy["script-src"][0].startswith("'nonce-")
+    assert policy["style-src"] == policy["script-src"]
+    assert policy["img-src"] == ["'self'"] and policy["connect-src"] == ["'self'"]
+    assert "'unsafe-inline'" not in page.headers["Content-Security-Policy"]
+
+
 @pytest.mark.parametrize(("title", "header"), [
     (None, 'attachment; filename="j.m4a"'),
     ("A talk", 'attachment; filename="A talk.m4a"'),

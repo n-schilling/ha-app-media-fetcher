@@ -30,7 +30,7 @@ HASS = """<home-assistant></home-assistant><script>document.querySelector("home-
 { language: "LANG", locale: { language: "LANG" }, themes: { darkMode: false } };</script>"""
 LANG = re.compile(r"[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})?")
 PASS_BACK = ("Content-Type", "Content-Security-Policy", "Cache-Control", "Content-Disposition",
-             "X-Content-Type-Options")
+             "X-Content-Type-Options", "Referrer-Policy")
 
 
 async def frame(request: web.Request) -> web.Response:

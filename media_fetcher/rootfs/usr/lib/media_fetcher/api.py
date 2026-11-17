@@ -100,10 +100,20 @@ def bearer_ok(request: web.Request, token: str) -> bool:
             and hmac.compare_digest(value.strip().encode(), token.encode()))
 
 
-async def no_sniffing(request: web.Request, response: web.StreamResponse) -> None:
+# Every answer that brings no policy of its own (JSON, files, the icon, errors)
+# may load, run and be framed by nothing but Home Assistant
+STRICT_CSP = "default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'"
+
+
+async def security_headers(request: web.Request, response: web.StreamResponse) -> None:
     """Every answer, files and errors included: browsers take the content
-    type as given and never guess one."""
+    type as given and never guess one, the ingress path with its token never
+    leaves Home Assistant as a referrer, and nothing is cached but what says
+    so itself (the icon)."""
     response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers.setdefault("Content-Security-Policy", STRICT_CSP)
+    response.headers.setdefault("Cache-Control", "no-store")
 
 
 @web.middleware
@@ -584,8 +594,8 @@ def _form(t: dict) -> str:
 def csp(nonce: str) -> str:
     """The page runs its own script and style only, talks to its own
     endpoints only, and opens inside Home Assistant only."""
-    return (f"default-src 'none'; script-src 'nonce-{nonce}'; style-src 'self' 'nonce-{nonce}'; "
-            "connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; "
+    return (f"default-src 'none'; script-src 'nonce-{nonce}'; style-src 'nonce-{nonce}'; "
+            "connect-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; "
             "frame-ancestors 'self'")
 
 
@@ -682,7 +692,7 @@ def create_app(manager: JobManager, token: str, versions: dict, version: str,
                core_peers: frozenset[str] = frozenset({CORE_PEER}), slug: str | None = None,
                settings: dict | None = None) -> web.Application:
     app = web.Application(middlewares=[errors, auth], client_max_size=BODY_LENGTH)
-    app.on_response_prepare.append(no_sniffing)
+    app.on_response_prepare.append(security_headers)
     app["ctx"] = Context(manager, token, versions, version, page_peers, core_peers, slug, settings or {})
     app.router.add_get(HEALTH, health)
     app.router.add_get(OPENAPI_PATH, openapi)

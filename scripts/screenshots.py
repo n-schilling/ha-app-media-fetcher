@@ -208,6 +208,25 @@ def check_header(check: Checks, page: Page | Frame, name: str, width: int, lang:
               f"{name}: settings link {settings['href']} target {settings['target']}")
 
 
+def security_headers(check: Checks, headers: dict[str, str], where: str) -> None:
+    """The headers STANDARD.md section 3 asks of every answer of the page."""
+    policy = {
+        part.split()[0]: part.split()[1:]
+        for part in headers.get("content-security-policy", "").split(";") if part.strip()
+    }
+    scripts = policy.get("script-src", [])
+    check(policy.get("default-src") == ["'none'"], f"{where}: CSP default-src 'none' ({policy.get('default-src')})")
+    check("'unsafe-inline'" not in scripts and any(s.startswith(("'sha256-", "'nonce-")) for s in scripts),
+          f"{where}: CSP script-src by hash or nonce ({scripts})")
+    check(policy.get("frame-ancestors") == ["'self'"], f"{where}: CSP frame-ancestors 'self'")
+    check(policy.get("base-uri") == ["'none'"], f"{where}: CSP base-uri 'none'")
+    check(policy.get("form-action") in (["'none'"], ["'self'"]), f"{where}: CSP form-action")
+    check(headers.get("x-content-type-options") == "nosniff", f"{where}: X-Content-Type-Options nosniff")
+    check(headers.get("referrer-policy") in ("no-referrer", "same-origin"),
+          f"{where}: Referrer-Policy ({headers.get('referrer-policy')})")
+    check(headers.get("cache-control") == "no-store", f"{where}: Cache-Control no-store")
+
+
 def check_page(check: Checks, page, name: str, width: int, scheme: str, expected_version: str) -> None:
     check_header(check, page, name, width)
     last = page.evaluate("""() => { const e = document.body.lastElementChild;
@@ -264,8 +283,8 @@ def run(image: str, out: Path) -> list[str]:
                 page.on("pageerror", lambda x, e=errors: e.append(str(x)))
                 resp = page.goto(f"{base}{PREFIX}/")
                 check(resp is not None and resp.status == 200, f"{name}: page answers through ingress")
-                csp = resp.headers.get("content-security-policy", "") if resp else ""
-                check("frame-ancestors 'self'" in csp, f"{name}: content security policy sent")
+                if resp is not None:
+                    security_headers(check, resp.headers, name)
                 page.wait_for_load_state("networkidle")
                 check_page(check, page, name, width, scheme, expected_version)
                 if shot:
