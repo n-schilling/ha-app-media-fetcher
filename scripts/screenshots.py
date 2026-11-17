@@ -13,17 +13,26 @@ gives it, and the ingress proxy (scripts/page/ingress.py) at 172.30.32.2,
 the only address the page answers. The browser talks to the proxy only, on
 a port of 127.0.0.1.
 
-Checked in light, dark and at phone width: the header (the store icon left
-of the name, the name exactly as `name` in config.yaml, everything within
-the header's box, no tabs and no bottom bar for this single view, stamp
-with the app's time, refresh, settings link with target="_top" and the slug
-from the host name), the version line as the last element, no console
+Checked in light, dark and at phone width: the header as Home Assistant's
+own pages draw it (STANDARD.md, section 7: the menu button first, shown
+only when narrow, below 870 px; then for this single view the store icon
+left of the name, the name exactly as `name` in config.yaml, everything
+within the header's box, no tabs and no bottom bar; stamp with the app's
+time, hidden when narrow, refresh, settings link with target="_top" and the
+slug from the host name), the version line as the last element, no console
 errors, no script errors, no content security policy violations, no
-sideways scrolling; and once that refresh reloads and moves the stamp, the
-page updates itself with the stamp, a job is removed, and the settings link leaves the ingress frame; and
-that the page takes Home Assistant's language (a stand-in for its frontend
-in German, English and French around the frame) over the browser's,
-reloading once.
+sideways scrolling; Home Assistant's frame (the stand-in plays its part,
+share/ha-app/ha-frame.js the page's): no kiosk mode on a wide screen; on a
+phone (390 x 844, with a notch of 47 px and a home bar of 34 px, and
+without) kiosk mode, so no bar of Home Assistant above the app, the insets
+handled by the page, the header from the top and 56 px plus the notch, the
+menu button opening Home Assistant's sidebar, wider and back switching
+kiosk mode off and on with one message each way; and once that refresh
+reloads and moves the stamp, the page updates itself with the stamp, a job
+is removed, and the settings link leaves the ingress frame; and that the
+page takes Home Assistant's language (a stand-in for its frontend in
+German, English and French around the frame) over the browser's, reloading
+once.
 
 The browser is the installed Google Chrome, else Playwright's Chromium
 (`uv run --with playwright==1.65.0 playwright install chromium` once).
@@ -54,8 +63,8 @@ SUBNET, GATEWAY = "172.30.32.0/23", "172.30.32.1"
 APP_IP, INGRESS_IP = "172.30.33.10", "172.30.32.2"
 PREFIX = "/api/hassio_ingress/page-check-token"
 TEXT = {  # what the header says, per language
-    "en": {"as_of": "As of", "refresh": "Refresh", "settings": "Settings"},
-    "de": {"as_of": "Stand", "refresh": "Aktualisieren", "settings": "Einstellungen"},
+    "en": {"as_of": "As of", "refresh": "Refresh", "settings": "Settings", "menu": "Menu"},
+    "de": {"as_of": "Stand", "refresh": "Aktualisieren", "settings": "Einstellungen", "menu": "Menü"},
 }
 VARIANTS = (  # name, width, height, colour scheme, screenshot
     ("desktop light", 1100, 900, "light", "page.png"),
@@ -151,29 +160,35 @@ def luminance(rgb: str) -> float:
     return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255
 
 
-def check_header(check: Checks, page: Page | Frame, name: str, width: int, lang: str = "en") -> None:
+def check_header(check: Checks, page: Page | Frame, name: str, width: int, lang: str = "en",
+                 safe: tuple[int, int] = (0, 0)) -> None:
+    """The header as Home Assistant's own pages draw it (STANDARD.md, section 7): narrow is
+    Home Assistant's (below 870 px), safe the insets top and bottom the page keeps clear of."""
     t = TEXT[lang]
+    phone = width <= 870
     header = page.evaluate("""() => {
       const h = document.querySelector("body > header");
       if (!h) return null;
-      const kids = [...h.children], actions = h.querySelector(".actions");
+      const kids = [...h.children], actions = h.querySelector(".actions"), box = h.getBoundingClientRect();
+      const shown = (e) => !!e && getComputedStyle(e).display !== "none";
+      const m = h.querySelector(":scope > .menu"), brand = h.querySelector(":scope > img.brand");
       return {
-        first: kids.map((e) => e.tagName.toLowerCase()), h1: (h.querySelector("h1") || {}).textContent,
+        tags: kids.map((k) => k.tagName.toLowerCase() + (k.className ? "." + k.className.split(" ").join(".") : "")),
+        h1: (h.querySelector("h1") || {}).textContent,
+        narrow: document.documentElement.classList.contains("narrow"), top: box.top, height: box.height,
+        menu: m && {first: kids[0] === m, ha: m.hasAttribute("data-ha-menu"), role: m.getAttribute("role"),
+                    title: m.title, label: m.getAttribute("aria-label"), icon: !!m.querySelector("svg path"), shown: shown(m)},
         // The store icon left of the name: loaded, 24 px, in the row of the name
-        icon: h.firstElementChild.matches("img.brand") ? (() => {
-          const box = h.firstElementChild.getBoundingClientRect(), name = h.querySelector(":scope > h1").getBoundingClientRect();
-          return {src: h.firstElementChild.getAttribute("src"), loaded: h.firstElementChild.complete && h.firstElementChild.naturalWidth > 0,
-                  size: [box.width, box.height], row: Math.abs((box.top + box.bottom) / 2 - (name.top + name.bottom) / 2) < 2,
-                  left: box.right <= name.left};
+        icon: brand ? (() => {
+          const r = brand.getBoundingClientRect(), name = h.querySelector(":scope > h1").getBoundingClientRect();
+          return {src: brand.getAttribute("src"), loaded: brand.complete && brand.naturalWidth > 0,
+                  size: [r.width, r.height], row: Math.abs((r.top + r.bottom) / 2 - (name.top + name.bottom) / 2) < 2,
+                  left: r.right <= name.left};
         })() : null,
-        // Icon, name and buttons within the header's box (on a phone too)
-        inside: (() => {
-          const box = h.getBoundingClientRect();
-          return [h.firstElementChild, h.querySelector(":scope > h1"), ...(actions ? actions.children : [])]
-            .filter((e) => e && getComputedStyle(e).display !== "none")
-            .every((e) => { const r = e.getBoundingClientRect();
-              return r.left >= box.left - 0.5 && r.right <= box.right + 0.5 && r.top >= box.top - 0.5 && r.bottom <= box.bottom + 0.5; });
-        })(),
+        // Menu, icon, name and buttons within the header's box (below the notch, on a phone too)
+        inside: [m, brand, h.querySelector(":scope > h1"), ...(actions ? actions.children : [])]
+          .filter(shown).every((e) => { const r = e.getBoundingClientRect();
+            return r.left >= box.left - 0.5 && r.right <= box.right + 0.5 && r.top >= box.top - 0.5 && r.bottom <= box.bottom + 0.5; }),
         // A single view: no tabs, so no bar at the bottom either
         tabs: document.querySelectorAll("header .tabs, header .tab").length,
         actions: actions ? [...actions.children].map((e) => ({
@@ -186,11 +201,18 @@ def check_header(check: Checks, page: Page | Frame, name: str, width: int, lang:
     check(header is not None, f"{name}: the page has a header")
     if header is None:
         return
-    check(header["first"] == ["img", "h1", "div"] and header["h1"] == NAME,
-          f"{name}: header is the icon, h1 {NAME!r} (config.yaml) and the actions ({header['first']}, {header['h1']!r})")
+    check(header["narrow"] == phone, f"{name}: html.narrow {phone} (Home Assistant's narrow)")
+    check(header["tags"] == ["a.icon-button.menu", "img.brand", "h1.name", "div.actions"] and header["h1"] == NAME,
+          f"{name}: header is the menu button, the icon, h1 {NAME!r} (config.yaml) and the actions "
+          f"({header['tags']}, {header['h1']!r})")
+    check(abs(header["top"]) < 0.5 and abs(header["height"] - 56 - safe[0]) < 0.5,
+          f"{name}: header from the top, 56 + {safe[0]} px high ({header['top']}, {header['height']})")
+    m = header["menu"] or {}
+    check(m.get("first") and m.get("ha") and m.get("role") == "button" and m.get("title") == t["menu"] == m.get("label")
+          and m.get("icon") and m.get("shown") == phone, f"{name}: menu button first, {'shown' if phone else 'hidden'} ({m})")
     check(header["icon"] == {"src": "icon.png", "loaded": True, "size": [24, 24], "row": True, "left": True},
           f"{name}: the app's icon shows, 24 px, left of the name in its row ({header['icon']})")
-    check(header["inside"], f"{name}: icon, name and buttons within the header at {width} px")
+    check(header["inside"], f"{name}: menu, icon, name and buttons within the header at {width} px")
     check(header["tabs"] == 0, f"{name}: a single view, no tabs and no bottom bar")
     acts = header["actions"]
     check([a["tag"] for a in acts] == ["span", "a", "a"], f"{name}: actions are stamp, refresh, settings")
@@ -199,7 +221,7 @@ def check_header(check: Checks, page: Page | Frame, name: str, width: int, lang:
         m = re.fullmatch(rf"{t['as_of']} (\d\d:\d\d:\d\d)", stamp["text"] or "")
         check("stamp" in stamp["cls"] and "opt" in stamp["cls"] and m and near(m.group(1)),
               f"{name}: stamp {stamp['text']!r} is the app's time ({TZ}, now {app_time()})")
-        check(stamp["visible"] == (width > 600), f"{name}: stamp {'shown' if width > 600 else 'hidden'} at {width} px")
+        check(stamp["visible"] != phone, f"{name}: stamp {'hidden' if phone else 'shown'} at {width} px")
         check(refresh["id"] == "refresh" and refresh["href"] == "" and refresh["role"] == "button"
               and refresh["title"] == t["refresh"] and "icon-button" in refresh["cls"] and refresh["svg"],
               f"{name}: refresh button")
@@ -295,6 +317,11 @@ def run(image: str, out: Path) -> list[str]:
                 check(not csp_hits, f"{name}: no content security policy violations {csp_hits}")
                 context.close()
             interact(check, browser, base)
+            for width, height, safe, lang in ((1200, 760, (0, 0), "en"), (390, 844, (47, 34), "de"),
+                                              (390, 844, (0, 0), "en")):
+                # The phone with a notch as a picture for review, not for the README
+                notch = safe != (0, 0) and out.resolve() != (ROOT / "docs/screenshots").resolve()
+                ha_frame(check, browser, base, width, height, safe, lang, out / "phone-notch.png" if notch else None)
             frame_check(check, browser, base)
             language_check(check, browser, base)
             browser.close()
@@ -346,6 +373,76 @@ def interact(check: Checks, browser, base: str) -> None:
     check(not errors, f"while clicking: no console or script errors {errors}")
     csp_hits = page.evaluate("() => window.__csp")
     check(not csp_hits, f"while clicking: no content security policy violations {csp_hits}")
+    context.close()
+
+
+def ha_frame(check: Checks, browser, base: str, width: int, height: int, safe: tuple[int, int], lang: str,
+             shot: Path | None) -> None:
+    """Home Assistant's part of the frame (scripts/page/ingress.py plays it, share/ha-app/ha-frame.js
+    the page's): kiosk mode only while narrow, the notch and the home bar by Home Assistant's insets,
+    the menu button opening the sidebar."""
+    phone = width <= 870
+    where = f"frame, {width} px" + (f", notch {safe[0]} px, home bar {safe[1]} px" if safe != (0, 0) else "")
+    print(f"==> {where}", flush=True)
+    context = browser.new_context(viewport={"width": width, "height": height}, color_scheme="dark",
+                                  locale="de-DE" if lang == "de" else "en-US", extra_http_headers={"Accept-Language": lang},
+                                  device_scale_factor=2 if phone else 1)
+    context.add_init_script(CSP_WATCH)
+    page = context.new_page()
+    errors: list[str] = []
+    page.on("console", lambda m: m.type == "error" and errors.append(m.text))
+    page.on("pageerror", lambda x: errors.append(str(x)))
+    page.goto(base + "/" + ("?safe=" + ",".join(map(str, safe)) if safe != (0, 0) else ""))
+    page.frame_locator("#ingress").locator("body > header h1").wait_for(state="attached")
+    page.wait_for_function("window.__safe !== null")
+    page.wait_for_timeout(500)  # room for the answer, and for any further message, which must not loop
+    app = next(f for f in page.frames if f.parent_frame is not None)
+    app.wait_for_selector("html.narrow" if phone else "html:not(.narrow)", state="attached")
+    if safe != (0, 0):
+        app.wait_for_function("getComputedStyle(document.documentElement)"
+                              f".getPropertyValue('--safe-area-inset-top').trim() === '{safe[0]}px'")
+    seen = page.evaluate("""() => ({kiosk: window.__kiosk, safe: window.__safe,
+      messages: window.__messages.map((m) => m.type + (m.type.endsWith("/subscribe-properties") ? ":" + m.kioskMode : "")),
+      bar: getComputedStyle(document.getElementById("ha-bar")).display !== "none",
+      frame: (() => { const r = document.getElementById("ingress").getBoundingClientRect(); return [r.top, r.bottom - innerHeight]; })()})""")
+    check(seen["kiosk"] is phone, f"{where}: kiosk mode {'' if phone else 'not '}requested ({seen['messages']})")
+    check(seen["safe"] is True, f"{where}: the page keeps clear of the notch itself (handleSafeArea)")
+    check(not seen["bar"], f"{where}: no bar of Home Assistant above the app")
+    check(seen["frame"] == [0, 0], f"{where}: the frame fills the window ({seen['frame']})")
+    check(len(seen["messages"]) == 1, f"{where}: one message, no loop ({seen['messages']})")
+    check_header(check, app, where, width, lang, safe)
+    over = app.evaluate("() => document.documentElement.scrollWidth - window.innerWidth")
+    check(over <= 0, f"{where}: no sideways scrolling ({over} px over)")
+    if safe != (0, 0):
+        # The version line, the page's last, at the very end of the page: clear of the home bar
+        gap = app.evaluate("""() => { window.scrollTo(0, document.documentElement.scrollHeight);
+          return innerHeight - document.querySelector("footer.version").getBoundingClientRect().bottom; }""")
+        check(gap >= safe[1] - 0.5, f"{where}: the version line {safe[1]} px clear of the home bar ({gap})")
+        app.evaluate("() => window.scrollTo(0, 0)")
+    if shot:
+        page.screenshot(path=shot)
+        print(f"wrote {shot}")
+    if phone:
+        app.locator("body > header .menu").click()
+        page.wait_for_timeout(300)  # the message reaches Home Assistant's window after the click
+        check(page.evaluate("window.__menu") == 1, f"{where}: the menu button opens Home Assistant's sidebar")
+        if safe != (0, 0):
+            # Wider than narrow and back: kiosk mode off (Home Assistant's bar back), then on again
+            page.set_viewport_size({"width": 1200, "height": height})
+            app.wait_for_selector("html:not(.narrow)", state="attached")
+            page.wait_for_timeout(300)
+            check(page.evaluate("window.__kiosk") is False, f"{where}: wide again, kiosk mode off")
+            page.set_viewport_size({"width": width, "height": height})
+            app.wait_for_selector("html.narrow", state="attached")
+            page.wait_for_timeout(300)
+            sent = page.evaluate("""window.__messages.filter((m) => m.type.endsWith("-properties"))
+              .map((m) => m.type.split("/")[1] + (m.type.endsWith("/subscribe-properties") ? ":" + m.kioskMode : ""))""")
+            check(page.evaluate("window.__kiosk") is True and sent == [
+                "subscribe-properties:true", "unsubscribe-properties", "subscribe-properties:false",
+                "subscribe-properties:true"], f"{where}: narrow again, kiosk mode on, one message each way ({sent})")
+            check_header(check, app, where, width, lang, safe)
+    csp_hits = [v for f in page.frames for v in (f.evaluate("window.__csp || []") or [])]
+    check(not errors and not csp_hits, f"{where}: no console errors, no CSP violations ({errors + csp_hits})")
     context.close()
 
 

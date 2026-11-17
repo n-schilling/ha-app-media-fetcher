@@ -226,7 +226,7 @@ async def test_app_icon(client, manager, aiohttp_client, monkeypatch):
     assert (resp.status, resp.headers["Content-Type"], await resp.read()) == (200, "image/png", icon)
     assert resp.headers["Cache-Control"] == "max-age=86400"
     page = await (await client.get("/")).text()
-    assert '<header><img class="brand" src="icon.png" alt="" width="24" height="24"><h1>' in page
+    assert '</a><img class="brand" src="icon.png" alt="" width="24" height="24"><h1 class="name">' in page
     other = await aiohttp_client(create_app(manager, TOKEN, {}, "0.2.0", page_peers=frozenset({"172.30.32.2"})))
     assert (await other.get("/icon.png")).status == 403
     monkeypatch.setattr(api, "APP_ICON", None)
@@ -235,7 +235,8 @@ async def test_app_icon(client, manager, aiohttp_client, monkeypatch):
 
 async def test_status_page_without_jobs(client):
     page = await (await client.get("/")).text()
-    assert "No jobs." in page and "from the options" in page and "Home Assistant only" not in page
+    body = page[page.index("<body"):]  # the shared scripts' comments in the head say all sorts
+    assert "No jobs." in body and "from the options" in body and "Home Assistant only" not in body
 
 
 def test_page_header_has_stamp_refresh_and_settings_in_that_order():
@@ -249,14 +250,19 @@ def test_page_header_has_stamp_refresh_and_settings_in_that_order():
                   core_peers=frozenset(), slug="local_media_fetcher")
     page = render(ctx, [], now=now)
     header = re.search(r"<header>(.*?)</header>", page).group(1)
-    assert header.startswith('<img class="brand" src="icon.png" alt="" width="24" height="24">'
-                             '<h1>Media Fetcher</h1><div class="actions">')
+    # As Home Assistant's own pages: the menu button first (ha-frame.js, shown when
+    # narrow), then a single view's icon and name, no tabs (STANDARD.md, section 7)
+    assert re.match(r'<a class="icon-button menu" href="" data-ha-menu role="button" title="Menu" aria-label="Menu">'
+                    r'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3,6H21V8H3V6M3,11H21V13H3V11M3,16H21V18H3V16Z"/>'
+                    r'</svg></a><img class="brand" src="icon.png" alt="" width="24" height="24">'
+                    r'<h1 class="name">Media Fetcher</h1><div class="actions">', header)
+    assert "tabs" not in header
     stamp = header.index('<span class="stamp opt">As of 14:05:09</span>')
     refresh = header.index('<a class="icon-button" id="refresh" href="" role="button" title="Refresh">')
     settings = header.index('<a class="icon-button" href="/config/app/local_media_fetcher/config" target="_top" '
                             'title="Settings">')
     assert stamp < refresh < settings
-    assert header.count("<a ") == 2 and "<button" not in header
+    assert header.count("<a ") == 3 and "<button" not in header
     # Without a slug there is no settings link, the rest stays
     header = re.search(r"<header>(.*?)</header>", render(Context(None, "", {}, "1.0.0", frozenset(), frozenset()),
                                                          [], now=now)).group(1)
@@ -294,9 +300,24 @@ def test_both_languages_have_the_same_texts():
 
 
 def test_shared_language_script_first():
-    from media_fetcher.api import HA_LANG_JS, SCRIPT, page_script
+    from media_fetcher.api import HA_FRAME_JS, HA_LANG_JS, SCRIPT, page_script
     shared = HA_LANG_JS.read_text()
-    assert "ha_lang" in shared and page_script() == shared + SCRIPT
+    frame = HA_FRAME_JS.read_text()
+    assert "ha_lang" in shared and page_script() == shared + frame + SCRIPT
+    # ha-frame.js right after ha-lang.js: Home Assistant's frame, the safe area left to the page
+    assert "home-assistant/subscribe-properties" in frame and "handleSafeArea: true" in frame
+
+
+async def test_page_in_home_assistants_frame(client):
+    """One script under the nonce (ha-lang.js, ha-frame.js, the page's code), the
+    viewport to the screen's edges, the menu button in both languages."""
+    from media_fetcher.api import page_script
+    page = await (await client.get("/", headers={"Cookie": "ha_lang=en"})).text()
+    assert page.count("</script>") == 1 and f">{page_script()}</script>" in page
+    assert '<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">' in page
+    assert 'data-ha-menu role="button" title="Menu" aria-label="Menu"' in page
+    page = await (await client.get("/", headers={"Cookie": "ha_lang=de"})).text()
+    assert 'data-ha-menu role="button" title="Menü" aria-label="Menü"' in page
 
 
 async def test_private_addresses_are_refused_before_a_job_starts(client, scenario):

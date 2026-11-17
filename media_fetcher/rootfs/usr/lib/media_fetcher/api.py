@@ -318,8 +318,12 @@ HA_CSS = Path(__file__).resolve().parents[2] / "local/share/ha-app/ha.css"
 # Home Assistant's language for the page (cookie ha_lang), shared like the
 # stylesheet; it runs first, in the page's one script
 HA_LANG_JS = HA_CSS.with_name("ha-lang.js")
-# The app's store icon at the left of the header, copied into the image next
-# to the stylesheet; the page links it as icon.png, relative to the ingress path
+# Home Assistant's frame (narrow, the phone's insets, its own bar off on a
+# phone, the menu button), shared the same way; it runs right after ha-lang.js
+HA_FRAME_JS = HA_CSS.with_name("ha-frame.js")
+# The app's store icon at the left of the header (a single view: icon and
+# name, after the menu button), copied into the image next to the
+# stylesheet; the page links it as icon.png, relative to the ingress path
 APP_ICON_FILE = HA_CSS.with_name("icon.png")
 
 
@@ -334,7 +338,10 @@ def app_icon() -> bytes | None:
 APP_ICON = app_icon()
 APP_ICON_TAG = '<img class="brand" src="icon.png" alt="" width="24" height="24">'
 STYLE = """
-section.fetch { margin: 0 auto; padding: 16px 16px 0; max-width: 1040px; }
+section.fetch {
+  margin: 0 auto; padding: 16px 16px 0; max-width: 1040px;
+  padding-right: calc(16px + var(--ha-inset-right)); padding-left: calc(16px + var(--ha-inset-left));
+}
 section.fetch .card { margin-bottom: 0; }
 #fetch { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 8px 16px; }
 #fetch .field { margin-top: 0; }
@@ -347,7 +354,7 @@ a.download { font-weight: var(--ha-font-weight-medium); }
 .list .button { height: 32px; padding: 0 12px; }
 .list td.title { min-width: 180px; word-break: break-word; }
 @media (max-width: 600px) {
-  section.fetch { padding: 8px 8px 0; }
+  section.fetch { padding: 8px calc(8px + var(--ha-inset-right)) 0 calc(8px + var(--ha-inset-left)); }
   /* One block per job: state and button, then title, then result */
   .list tr:has(th) { display: none; }
   .list tr { display: grid; grid-template-columns: 1fr auto; align-items: center; padding: 8px 16px;
@@ -440,6 +447,7 @@ SCRIPT = """(() => {
 })();""".replace("NAMES", json.dumps(THEME_VARS)).replace("REFRESH", str(REFRESH))
 TARGETS = (("Audio", "audio", KINDS["audio"]), ("Video", "video", KINDS["video"]))
 # Material Design Icons (Apache 2.0), as Home Assistant draws them
+MENU_ICON = "M3,6H21V8H3V6M3,11H21V13H3V11M3,16H21V18H3V16Z"
 REFRESH_ICON = ("M17.65,6.35C16.2,4.9 14.21,4 12,4A8,8 0 0,0 4,12A8,8 0 0,0 12,20C15.73,20 18.84,17.45 19.73,14H17.65C16.83,"
                 "16.33 14.61,18 12,18A6,6 0 0,1 6,12A6,6 0 0,1 12,6C13.66,6 15.14,6.69 16.22,7.78L13,11H20V4L17.65,6.35Z")
 SETTINGS_ICON = ("M12,8A4,4 0 0,1 16,12A4,4 0 0,1 12,16A4,4 0 0,1 8,12A4,4 0 0,1 12,8M12,10A2,2 0 0,0 10,12A2,2 0 0,0 "
@@ -467,14 +475,14 @@ def ha_css() -> str:
 
 @functools.cache
 def page_script() -> str:
-    """ha-lang.js first, then the page's own code: one script."""
-    return HA_LANG_JS.read_text() + SCRIPT
+    """ha-lang.js first, then ha-frame.js, then the page's own code: one script."""
+    return HA_LANG_JS.read_text() + HA_FRAME_JS.read_text() + SCRIPT
 
 
 # The page's texts; German for Home Assistant in German, else English
 TEXT = {
     "en": {
-        "as_of": "As of", "refresh": "Refresh", "settings": "Settings", "options": "Options in use",
+        "menu": "Menu", "as_of": "As of", "refresh": "Refresh", "settings": "Settings", "options": "Options in use",
         "fetch": "Fetch", "jobs": "Jobs",
         "service": "Service", "link": "Link", "format": "Format", "keep": " (keep the source format)",
         "hint": "Paste a link, pick a format, and download the file from the list below when the job is done.",
@@ -492,7 +500,7 @@ TEXT = {
                    "converting": "converting", "done": "done", "failed": "failed", "cancelled": "cancelled"},
     },
     "de": {
-        "as_of": "Stand", "refresh": "Aktualisieren", "settings": "Einstellungen", "options": "Aktive Optionen",
+        "menu": "Menü", "as_of": "Stand", "refresh": "Aktualisieren", "settings": "Einstellungen", "options": "Aktive Optionen",
         "fetch": "Abrufen",
         "jobs": "Aufträge", "service": "Dienst", "link": "Link", "format": "Format",
         "keep": " (Format der Quelle behalten)",
@@ -603,6 +611,14 @@ def _icon(path: str) -> str:
     return f'<svg viewBox="0 0 24 24" aria-hidden="true"><path d="{path}"/></svg>'
 
 
+def menu_button(lang: str = "en") -> str:
+    """First in the header: the menu button, which opens Home Assistant's
+    sidebar (share/ha-app/ha-frame.js); ha.css shows it only when narrow."""
+    label = TEXT[lang]["menu"]
+    return (f'<a class="icon-button menu" href="" data-ha-menu role="button" title="{label}" aria-label="{label}">'
+            f'{_icon(MENU_ICON)}</a>')
+
+
 def header_actions(slug: str | None, now: float, lang: str = "en") -> str:
     """The header every app page of this author has: when the data were
     read (the app's local time), reload, and Home Assistant's settings page
@@ -647,11 +663,14 @@ def render(ctx: Context, jobs: list[dict], base: str = "", nonce: str = "", now:
     actions = header_actions(ctx.slug, time.time() if now is None else now, lang)
     say = json.dumps({k: t[k] for k in ("starting", "started", "failed")}, ensure_ascii=False)
     return (f'<!doctype html><html lang="{lang}"><head><meta charset="utf-8">'
-            '<meta name="viewport" content="width=device-width, initial-scale=1"><title>Media Fetcher</title>'
+            '<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><title>Media Fetcher</title>'
             f'<style nonce="{esc(nonce)}">{ha_css()}</style><style nonce="{esc(nonce)}">{STYLE}</style>'
             f'<script nonce="{esc(nonce)}">{page_script()}</script></head>'
             f'<body data-base="{esc(base)}" data-text="{esc(say)}">'
-            f'<header>{APP_ICON_TAG}<h1>Media Fetcher</h1><div class="actions">{actions}</div></header>'
+            # As Home Assistant's own pages: the menu button (narrow only); a single
+            # view, so the app's icon and name, no tabs; then the actions
+            f'<header>{menu_button(lang)}{APP_ICON_TAG}<h1 class="name">Media Fetcher</h1>'
+            f'<div class="actions">{actions}</div></header>'
             f'<section class="fetch"><div class="card"><h2>{t["fetch"]}</h2>'
             f'<div class="content">{_form(t)}</div></div></section><main>'
             f'<div class="card"><h2>{t["jobs"]}</h2>{table}</div>'

@@ -15,7 +15,7 @@ The page looks like Home Assistant's own settings, follows the theme in use and 
 
 <img src="docs/screenshots/page.png" alt="The page: a form to fetch a link, the jobs with state, title, format and download link, the versions and the options in use" width="700">
 
-<img src="docs/screenshots/phone-dark.png" alt="The page on a phone in dark mode, one block per job" width="260">
+<img src="docs/screenshots/phone-dark.png" alt="The page on a phone in dark mode, with the menu button in the header, one block per job" width="260">
 
 ## Overview
 
@@ -54,7 +54,7 @@ A client asks what a link holds (`info`) or starts a job; yt-dlp fetches the med
 
 ## Development
 
-The service is a Python package in [`media_fetcher/rootfs/usr/lib/media_fetcher`](media_fetcher/rootfs/usr/lib/media_fetcher): `api.py` (aiohttp, the page), `jobs.py` (threads, files, cleanup), `fetcher.py` (yt-dlp options, limits and error mapping). The page's look comes from the stylesheet shared by these apps, [`ha.css`](media_fetcher/rootfs/usr/local/share/ha-app/ha.css), and its language from the script shared by them, [`ha-lang.js`](media_fetcher/rootfs/usr/local/share/ha-app/ha-lang.js); both stay identical in every app. The tests replace `yt_dlp.YoutubeDL` with a fake and need no network. Set up both Pythons the CI tests with (3.13 is the image's) and run every check:
+The service is a Python package in [`media_fetcher/rootfs/usr/lib/media_fetcher`](media_fetcher/rootfs/usr/lib/media_fetcher): `api.py` (aiohttp, the page), `jobs.py` (threads, files, cleanup), `fetcher.py` (yt-dlp options, limits and error mapping). The page's look comes from the stylesheet shared by these apps, [`ha.css`](media_fetcher/rootfs/usr/local/share/ha-app/ha.css), its language from the script shared by them, [`ha-lang.js`](media_fetcher/rootfs/usr/local/share/ha-app/ha-lang.js), and its place in Home Assistant's frame (narrow, a phone's notch, the menu button) from [`ha-frame.js`](media_fetcher/rootfs/usr/local/share/ha-app/ha-frame.js); all three stay identical in every app. The tests replace `yt_dlp.YoutubeDL` with a fake and need no network. Set up both Pythons the CI tests with (3.13 is the image's) and run every check:
 
 ```bash
 uv venv -p 3.13 .venv && uv pip install -p .venv --require-hashes -r media_fetcher/requirements.txt && uv pip install -p .venv -r requirements_test.txt
@@ -70,7 +70,7 @@ The packages are pinned with hashes; after changing `media_fetcher/requirements.
 cd media_fetcher && uv pip compile requirements.in --generate-hashes --universal --python-version 3.13 -o requirements.txt
 ```
 
-The Page check (the step "Page" of `scripts/check.sh`) starts the built image with made-up jobs ([`scripts/page/demo.py`](scripts/page/demo.py)) in a throwaway container, puts a stand-in for Home Assistant's ingress proxy in front of it at the proxy's address ([`scripts/page/ingress.py`](scripts/page/ingress.py)) and opens the page in a headless browser: the header (icon left of the name, the name as in `config.yaml`, all within the header, no tabs or bottom bar, stamp, refresh, settings link with `target="_top"` and the slug), the version line, no console errors or content security policy violations, light, dark and phone width, and that refresh moves the stamp, the self-update, removing a job, the gear inside Home Assistant's frame, and that the page follows Home Assistant's language (German, English, French) over the browser's, with one reload. The same script takes the screenshots in `docs/screenshots`:
+The Page check (the step "Page" of `scripts/check.sh`) starts the built image with made-up jobs ([`scripts/page/demo.py`](scripts/page/demo.py)) in a throwaway container, puts a stand-in for Home Assistant's ingress proxy in front of it at the proxy's address ([`scripts/page/ingress.py`](scripts/page/ingress.py)) and opens the page in a headless browser: the header as Home Assistant's own pages draw it (the menu button first, shown on a phone; icon left of the name, the name as in `config.yaml`, all within the header, no tabs or bottom bar, stamp, refresh, settings link with `target="_top"` and the slug), Home Assistant's part of the frame (the stand-in plays it: no kiosk mode on a wide screen; on a phone with a notch and a home bar kiosk mode, no bar of Home Assistant above the app, the header from the top and 56 px plus the notch, the version line clear of the home bar, the menu button opening the sidebar, kiosk mode off and on again across the width), the version line, no console errors or content security policy violations, light, dark and phone width, and that refresh moves the stamp, the self-update, removing a job, the gear inside Home Assistant's frame, and that the page follows Home Assistant's language (German, English, French) over the browser's, with one reload. The same script takes the screenshots in `docs/screenshots`:
 
 ```bash
 docker build --build-arg BUILD_VERSION=dev -t media-fetcher:check media_fetcher

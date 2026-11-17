@@ -2,6 +2,13 @@
 
 All notable changes to this app are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the app uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-11-17
+
+### Changed
+
+- The page looks like Home Assistant's own pages and the integrations' pages: on a phone without Home Assistant's extra bar, with the menu button and clear of the notch. On a phone (Home Assistant's narrow, below 870 px) the menu button at the left of the header opens Home Assistant's sidebar, the header starts at the top of the screen and grows by the notch, and the page keeps clear of the home bar; on a wide screen the header is as before, the app's icon and name. The page has one view, so there are no tabs and no bar at the bottom. The frame comes from the script shared by all apps, `ha-frame.js`, inline in the page's one script under its nonce, and the shared stylesheet `ha.css` is the current copy
+- The Page check plays Home Assistant's part of the frame and checks it on a wide screen and on a phone with and without a notch: kiosk mode only on the phone, the insets handled by the page, the header's height, the menu button
+
 ## [0.5.3] - 2026-11-17
 
 ### Security
