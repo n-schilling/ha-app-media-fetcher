@@ -2,6 +2,12 @@
 
 All notable changes to this app are documented here. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the app uses [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.2] - 2026-11-28
+
+### Changed
+
+- Home Assistant's Debian base image trixie-2026.11.1 (was trixie-2026.11.0)
+
 ## [0.6.1] - 2026-11-27
 
 ### Changed
