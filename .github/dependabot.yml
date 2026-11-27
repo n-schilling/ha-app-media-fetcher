@@ -8,14 +8,23 @@ updates:
     groups:
       actions:
         patterns: ["*"]
+  # Daily, so a new yt-dlp (sites such as YouTube change often) comes as its
+  # own pull request within a few days; the rest of pip in one group. The
+  # cooldown skips a version until it is two days old: yt-dlp often follows
+  # a release with a fix, and a bad release has time to be pulled.
   - package-ecosystem: pip
     directory: /media_fetcher
     target-branch: dev
     schedule:
-      interval: weekly
+      interval: daily
+    cooldown:
+      default-days: 2
     groups:
+      yt-dlp:
+        patterns: ["yt-dlp*"]
       python:
         patterns: ["*"]
+        exclude-patterns: ["yt-dlp*"]
   - package-ecosystem: docker
     directory: /media_fetcher
     target-branch: dev

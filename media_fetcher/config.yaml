@@ -1,5 +1,5 @@
 name: Media Fetcher
-version: "0.6.0"
+version: "0.6.1"
 slug: media_fetcher
 image: ghcr.io/n-schilling/{arch}-media-fetcher
 description: Fetches audio or video from links that yt-dlp understands, with a JavaScript runtime and ffmpeg, as a small HTTP service for integrations and automations
